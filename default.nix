@@ -4,6 +4,6 @@ mkDerivation {
   version = "0.8.0.0";
   src = ./.;
   libraryHaskellDepends = 
-    [ base pure-auth pure-conjurer pure-convoker pure-elm pure-hooks pure-json pure-sorcerer pure-txt pure-websocket ];
+    [ base pure-auth pure-conjurer pure-convoker pure-elm pure-hooks pure-json pure-sorcerer pure-txt pure-websocket yaml ];
   license = stdenv.lib.licenses.bsd3;
 }
