@@ -24,6 +24,7 @@ library
     , pure-elm
     , pure-hooks
     , pure-json
+    , pure-server
     , pure-sorcerer
     , pure-txt
     , pure-websocket
