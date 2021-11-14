@@ -375,8 +375,7 @@ class DefaultPermissions x where
 instance {-# INCOHERENT #-} Ownable a where
   isOwner un _ _ = isAdmin un
 
-instance {-# INCOHERENT #-} DefaultPermissions x where
-  permissions _ = readPermissions
+instance {-# INCOHERENT #-} DefaultPermissions x
 
 class DefaultCallbacks x where
   callbacks :: Maybe Username -> Callbacks x
