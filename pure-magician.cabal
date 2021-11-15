@@ -24,14 +24,22 @@ library
     , pure-elm
     , pure-hooks
     , pure-json
-    , pure-server
     , pure-sorcerer
     , pure-txt
     , pure-websocket
-    , yaml
+    , pure-websocket-cache
 
   exposed-modules:
-    Pure.Magician
+    Pure.Magician.Client
+
+  if !(impl(ghcjs))
+
+    build-depends:
+        pure-server
+      , yaml
+
+    exposed-modules:
+      Pure.Magician.Server
 
   default-language: Haskell2010
 

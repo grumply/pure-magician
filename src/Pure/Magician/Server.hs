@@ -1,6 +1,6 @@
 {-# language AllowAmbiguousTypes, DeriveAnyClass, DuplicateRecordFields, UndecidableInstances #-}
-{-# OPTIONS_GHC -fno-warn-unused-matches -fno-warn-name-shadowing #-}
-module Pure.Magician where
+{-# OPTIONS_GHC -fno-warn-unused-matches -fno-warn-name-shadowing -fno-warn-missing-methods #-}
+module Pure.Magician.Server where
 
 import Pure.Auth (Config(..),Token(..),Username(..),Password,Email,auth,authDB,tryCreateUser)
 import Pure.Conjurer hiding (Cache,cache)
@@ -36,10 +36,13 @@ data Config = Config
   , admin    :: Username
   , password :: Password
   , email    :: Email
+  , key      :: Maybe FilePath
+  , cert     :: Maybe FilePath
+  , chain    :: Maybe FilePath
   } deriving stock Generic
     deriving anyclass (ToJSON,FromJSON)
 
-getConfig :: IO Pure.Magician.Config
+getConfig :: IO Pure.Magician.Server.Config
 getConfig = decodeFileThrow "config.yaml"
 
 server 
@@ -51,26 +54,19 @@ server
     , Statics a ~ static, StaticMany static
     ) => (Elm (Msg (WithSocket a)) => Pure.Auth.Config a) -> IO ()
 server authConfig = do
-  cfg@Pure.Magician.Config {..} <- getConfig
+  cfg@Pure.Magician.Server.Config {..} <- getConfig
   hSetBuffering stdout NoBuffering 
   inject body (sorcerer (authDB @a ++ conjure @Admins ++ listenMany @resources))
   tryCreateUser @a admin email password 
-  inject body (run (Server authConfig cfg :: Server a))
+  tryCreateAdmins [admin]
+  cacheMany @(Caches a)
+  inject body do
+    case (,) <$> key <*> cert of
+      Just (k,c) -> Server.SecureServer host port k c chain (run . WithSocket authConfig)
+      _ -> Server.Server host port (run . WithSocket authConfig)
   ws <- clientWS host port
   staticMany @static ws
   forever (delay Minute)
-
-data Server a = Server (Elm (Msg (WithSocket a)) => Pure.Auth.Config a) Pure.Magician.Config
-instance (Typeable a, Component (Connection a), Caches a ~ caches, CacheMany caches, Resources a ~ resources, ServeMany resources) => Component (Server a) where
-  data Model (Server a) = Model
-    
-  initialize (Server _ Pure.Magician.Config {..}) = do
-    cacheMany @(Caches a)
-    tryCreateAdmins [admin]
-    pure Model
-  
-  view (Server acfg Pure.Magician.Config {..}) Model =
-    Server.Server host port (run . WithSocket acfg)
 
 data WithSocket a = WithSocket (Elm (Msg (WithSocket a)) => Pure.Auth.Config a) WebSocket
 instance (Typeable a, Component (Connection a), Resources a ~ resources, ServeMany resources) => Component (WithSocket a) where
@@ -153,7 +149,12 @@ class Cacheable a where
 instance {-# INCOHERENT #-} Conjurable a => Cacheable a where
   cache = Conjurer.cache @a
 
-cacheWithDiscussion :: forall a. (Conjurable a, _) => IO ()
+cacheWithDiscussion 
+  :: forall a. 
+    ( Conjurable a
+    , ToJSON (Product (Meta a)), FromJSON (Product (Meta a))
+    , ToJSON (Preview (Meta a)), FromJSON (Preview (Meta a))
+    ) => IO ()
 cacheWithDiscussion = do
   Conjurer.cache @a
   Convoker.convokerCache @a
