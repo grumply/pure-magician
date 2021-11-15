@@ -373,10 +373,7 @@ class DefaultPermissions x where
       canAmend' ctx nm _ = writePermission ctx nm
       canInteract' ctx nm _ = writePermission ctx nm
 
-instance {-# INCOHERENT #-} Ownable a where
-  isOwner un _ _ = isAdmin un
-
-instance {-# INCOHERENT #-} DefaultPermissions x
+instance {-# INCOHERENT #-} Ownable x => DefaultPermissions x
 
 class DefaultCallbacks x where
   callbacks :: Maybe Username -> Callbacks x

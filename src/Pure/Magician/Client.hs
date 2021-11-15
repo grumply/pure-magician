@@ -17,6 +17,7 @@ data Config = Config
   { host      :: String
   , port      :: Int
   , onStartup :: IO ()
+  , login     :: WebSocket -> View
   , fallback  :: WebSocket -> View
   , layout    :: WebSocket -> SomeRoute -> View -> View
   }
@@ -60,6 +61,7 @@ instance (Domains a ~ domains, RouteMany a domains, Typeable a, Theme (App a)) =
 
   data Route (App a) 
     = NoneR 
+    | LoginR
     | AppR SomeRoute
     
   route _new _old _app model = do
@@ -76,14 +78,18 @@ instance (Domains a ~ domains, RouteMany a domains, Typeable a, Theme (App a)) =
 
   location = \case
     NoneR -> "/"
+    LoginR -> "/login"
     AppR (SomeRoute sr) -> C.location sr
 
-  routes = routeMany @a @(Domains a) (AppR . SomeRoute)
+  routes = do
+    path "/login" (dispatch LoginR)
+    routeMany @a @(Domains a) (AppR . SomeRoute)
 
-  view rt (App socket Config { fallback, layout }) _ =
+  view rt (App socket Config { fallback, login, layout }) _ =
     Div <| Themed @(App a) |>
       [ case rt of
           NoneR -> fallback socket
+          LoginR -> login socket
           AppR sr@(SomeRoute rt) -> layout socket sr (C.pages @a socket rt)
       ]
 
