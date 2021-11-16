@@ -2,21 +2,26 @@
 {-# OPTIONS_GHC -fno-warn-missing-methods #-}
 module Pure.Magician.Client where
 
+import Pure.Auth (Token(..),authenticate,withToken)
 import qualified Pure.Conjurer as C
+import Pure.Convoker
 import Pure.Data.JSON (ToJSON(..),FromJSON(..))
 import Pure.Elm.Application
 import Pure.Elm.Component (Component)
 import Pure.WebSocket
 import Pure.WebSocket.Cache
+import Pure.Maybe
 
 import Control.Concurrent
+import Control.Monad
+import Data.Bool
 import Data.Typeable
 import System.IO
 
 data Config = Config
   { host      :: String
   , port      :: Int
-  , onStartup :: IO ()
+  , onStartup :: WebSocket -> IO ()
   , login     :: WebSocket -> View
   , fallback  :: WebSocket -> View
   , layout    :: WebSocket -> SomeRoute -> View -> View
@@ -57,7 +62,10 @@ instance (Domains a ~ domains, RouteMany a domains, Typeable a, Theme (App a)) =
 
   startup = [Startup]
 
-  upon Startup _ (App _ Config {..}) mdl = onStartup >> pure mdl
+  upon Startup _ (App socket Config {..}) mdl = do
+    forkIO (void (authenticate @a socket))
+    onStartup socket
+    pure mdl
 
   data Route (App a) 
     = NoneR 
@@ -135,3 +143,25 @@ class Routable a where
 
 instance {-# INCOHERENT #-} (Typeable a, C.Routable a) => Routable a where
   route = C.routes
+
+getAdmins :: IO (Product Admins)
+getAdmins =
+  req Cached (C.readingAPI @Admins) (C.readProduct @Admins) (AdminsContext,AdminsName) >>= \case
+    Nothing -> pure (Admins [])
+    Just as -> pure as
+
+withAdmin :: forall (a :: *). Typeable a => View -> View -> View
+withAdmin notAdmin admin =
+  withToken @a $ \case
+    Just (Token (un,_)) -> 
+      let 
+        producer = do
+          Admins as <- getAdmins 
+          pure (un `elem` as)
+      in
+        producing producer (consuming (bool notAdmin admin))
+    Nothing -> 
+      notAdmin
+
+asAdmin :: forall (a :: *). Typeable a => View -> View
+asAdmin = withAdmin @a Null

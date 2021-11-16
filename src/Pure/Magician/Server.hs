@@ -16,7 +16,7 @@ import Pure.WebSocket ( WebSocket, enact, repeal, clientWS, activate)
 
 import Data.Yaml (decodeFileThrow)
 
-import Control.Monad ( liftM2, forever )
+import Control.Monad ( liftM2, forever, void )
 import Data.Char
 import Data.List as List
 import Data.Typeable ( Typeable, Proxy(..) )
@@ -58,7 +58,10 @@ server authConfig = do
   hSetBuffering stdout NoBuffering 
   inject body (sorcerer (authDB @a ++ conjure @Admins ++ listenMany @resources))
   tryCreateUser @a admin email password 
-  tryCreateAdmins [admin]
+  tryReadProduct fullPermissions def AdminsContext AdminsName >>= \case
+    Just (Admins _) -> pure ()
+    Nothing -> void (tryCreateAdmins [admin])
+  cache @Admins
   cacheMany @(Caches a)
   inject body do
     case (,) <$> key <*> cert of
@@ -94,7 +97,8 @@ instance (Typeable a, Component (Connection a), Resources a ~ resources, ServeMa
 
   view (WithSocket acfg socket) (WithSocketModel token) | user <- fmap (\(Token (un,_)) -> un) token =
     SimpleHTML "withSocket" <||>
-      [ SimpleHTML "endpoints" <||> (serveMany @(Resources a) socket user)
+      [ SimpleHTML "endpoints" <||> 
+        ( defaultServeCaching @Admins socket user ++ serveMany @(Resources a) socket user)
       , let cfg = acfg 
         in let effect = enact socket (auth cfg) >>= \api -> pure (repeal api) 
            in useEffectWith' effect () Null
