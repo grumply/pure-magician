@@ -12,7 +12,8 @@ import Pure.Elm.Component (Elm,Default(..),View,pattern Null,Component(..),injec
 import Pure.Hooks (useEffectWith')
 import Pure.Sorcerer (Listener,sorcerer)
 import qualified Pure.Server as Server
-import Pure.WebSocket ( WebSocket, enact, repeal, clientWS, activate)
+import Pure.WebSocket ( WebSocket, enact, repeal, clientWS, activate )
+import qualified Pure.WebSocket as WS
 
 import Data.Yaml (decodeFileThrow)
 
@@ -52,7 +53,7 @@ server
     , Resources a ~ resources, ListenMany resources, ServeMany resources
     , Caches a ~ cache, CacheMany cache
     , Statics a ~ static, StaticMany static
-    ) => (Elm (Msg (WithSocket a)) => Pure.Auth.Config a) -> IO ()
+    ) => (Elm (Msg (WithSocket a)) => WebSocket -> Pure.Auth.Config a) -> IO ()
 server authConfig = do
   cfg@Pure.Magician.Server.Config {..} <- getConfig
   hSetBuffering stdout NoBuffering 
@@ -71,17 +72,27 @@ server authConfig = do
   staticMany @static ws
   forever (delay Minute)
 
-data WithSocket a = WithSocket (Elm (Msg (WithSocket a)) => Pure.Auth.Config a) WebSocket
+data WithSocket a = WithSocket (Elm (Msg (WithSocket a)) => WebSocket -> Pure.Auth.Config a) WebSocket
 instance (Typeable a, Component (Connection a), Resources a ~ resources, ServeMany resources) => Component (WithSocket a) where
   data Model (WithSocket a) = WithSocketModel (Maybe (Token a))
 
+  model = WithSocketModel Nothing
+
   data Msg (WithSocket a)
-    = GetUserToken (Maybe (Token a) -> IO ())
+    = Startup 
+    | GetUserToken (Maybe (Token a) -> IO ())
     | SetUserToken (Token a)
     | ClearUserToken
+
+  startup = [Startup]
     
-  upon msg _ (WithSocketModel userToken)  = 
+  upon msg (WithSocket cfg socket) (WithSocketModel userToken)  = 
     case msg of
+
+      Startup -> do
+        enact socket (auth (cfg socket))
+        serveMany @(Resources a) socket Nothing
+        pure (WithSocketModel userToken)
 
       GetUserToken with -> do
         with userToken 
@@ -92,21 +103,12 @@ instance (Typeable a, Component (Connection a), Resources a ~ resources, ServeMa
 
       SetUserToken t -> do
         pure (WithSocketModel (Just t))
-    
-  model = WithSocketModel Nothing
 
-  view (WithSocket acfg socket) (WithSocketModel token) | user <- fmap (\(Token (un,_)) -> un) token =
-    SimpleHTML "withSocket" <||>
-      [ SimpleHTML "endpoints" <||> 
-        ( defaultServeCaching @Admins socket user ++ serveMany @(Resources a) socket user)
-      , let cfg = acfg 
-        in let effect = enact socket (auth cfg) >>= \api -> pure (repeal api) 
-           in useEffectWith' effect () Null
-      , run @(Connection a) Connection {..}
-      ]
+  view (WithSocket _ socket) (WithSocketModel token) | user <- fmap (\(Token (un,_)) -> un) token =
+    run @(Connection a) Connection {..}
 
-defaultUserConfig :: forall a. Elm (Msg (WithSocket a)) => Pure.Auth.Config a 
-defaultUserConfig = Pure.Auth.Config {..}
+defaultUserConfig :: forall a. (Elm (Msg (WithSocket a)), ServeMany (Resources a), RemoveMany (Resources a)) => WebSocket -> Pure.Auth.Config a 
+defaultUserConfig socket = Pure.Auth.Config {..}
   where
     blacklist = []
     implicitlyWhitelisted = Prelude.not . (`elem` blacklist)
@@ -118,7 +120,17 @@ defaultUserConfig = Pure.Auth.Config {..}
         , implicitlyWhitelisted un
         ] 
 
-    onTokenChange = command . maybe ClearUserToken SetUserToken
+    onTokenChange mt = do
+      command (maybe ClearUserToken SetUserToken mt)
+      defaultServeCaching @Admins socket Nothing 
+      case mt of
+        Nothing -> void do
+          removeMany @(Resources a) socket
+          serveMany @(Resources a) socket Nothing
+
+        Just (Token (un,_)) -> void do
+          removeMany @(Resources a) socket
+          serveMany @(Resources a) socket (Just un)
 
     onDeleted username email = pure ()
 
@@ -194,40 +206,54 @@ instance {-# INCOHERENT #-} Conjurable a => Listenable a where
   listen = conjure @a
 
 class ServeMany (a :: [*]) where
-  serveMany :: WebSocket -> Maybe Username -> [View]
+  serveMany :: WebSocket -> Maybe Username -> IO ()
 
-instance (Servable x, ServeMany (xs :: [*])) => ServeMany ((x :: *) : xs) where 
-  serveMany ws mun = serve @x ws mun ++ serveMany @xs ws mun
+instance (Servable x, ServeMany xs) => ServeMany (x : xs) where 
+  serveMany ws mun = serve @x ws mun >> serveMany @xs ws mun
 
 instance ServeMany '[] where
-  serveMany _ _ = []
+  serveMany _ _ = pure ()
 
-class Servable a where
-  serve :: WebSocket -> Maybe Username -> [View]
+class RemoveMany (a :: [*]) where
+  removeMany :: WebSocket -> IO ()
+
+instance (Removable x, RemoveMany xs) => RemoveMany (x : xs) where
+  removeMany ws = remove @x ws >> removeMany @xs ws
+
+instance RemoveMany '[] where
+  removeMany _ = pure ()
+
+class Servable (a :: *) where
+  serve :: WebSocket -> Maybe Username -> IO ()
   
 instance {-# INCOHERENT #-} (Typeable a, Conjurable a, DefaultPermissions a, DefaultCallbacks a) => Servable a where
   serve = defaultServeCaching @a
+
+class Removable (a :: *) where
+  remove :: WebSocket -> IO ()
+
+instance {-# INCOHERENT #-} (Typeable a, Conjurable a ) => Removable a where
+  remove = defaultRemove @a
 
 defaultServe 
   :: forall x. 
     ( Typeable x, DefaultPermissions x, DefaultCallbacks x
     , Conjurable x
-    ) => Proxy x -> WebSocket -> Maybe Username -> [View]
-defaultServe _ ws mun =
-  [ useEffectWith' (effect mun) mun Null ]
-  where
-    effect = \case
-      Just un -> do
-        r <- enact ws (reading @x readPermissions (callbacks (Just un)))
-        p <- enact ws (publishing @x (permissions (Just un)) (callbacks (Just un)) def)
-        pure do
-          repeal r
-          repeal p
+    ) => WebSocket -> Maybe Username -> IO ()
+defaultServe ws = \case
+  Just un -> void do
+    enact ws (reading @x readPermissions (callbacks (Just un)))
+    enact ws (publishing @x (permissions (Just un)) (callbacks (Just un)) def)
 
-      _ -> do
-        r <- enact ws (reading @x readPermissions (callbacks Nothing))
-        pure do
-          repeal r
+  _ -> void do
+    enact ws (reading @x readPermissions (callbacks Nothing))
+
+defaultRemove
+  :: forall (x :: *).
+    ( Typeable x, Conjurable x ) => WebSocket -> IO ()
+defaultRemove ws = do
+  WS.remove ws (readingAPI @x) 
+  WS.remove ws (publishingAPI @x)
 
 defaultServeWithDiscussion
   :: forall x. 
@@ -238,71 +264,64 @@ defaultServeWithDiscussion
     , Conjurable x
     , Conjurable (Meta x)
     , Conjurable (Comment x)
-    ) => Proxy x -> WebSocket -> Maybe Username -> [View]
-defaultServeWithDiscussion _ ws mun =
-  [ useEffectWith' (effect mun) mun Null ]
-  where
-    effect = \case
-      Just un -> do
-        readResource     <- enact ws (reading @x readPermissions (callbacks (Just un)))
-        publishResource  <- enact ws (publishing @x (permissions (Just un)) (callbacks (Just un)) def)
+    ) => WebSocket -> Maybe Username -> IO ()
+defaultServeWithDiscussion ws = \case
+  Just un -> void do
+    enact ws (reading @x readPermissions (callbacks (Just un)))
+    enact ws (publishing @x (permissions (Just un)) (callbacks (Just un)) def)
 
-        readDiscussion   <- enact ws (cachingReading @(Discussion x) readPermissions (callbacks (Just un)))
-        readComment      <- enact ws (reading @(Comment x) (permissions (Just un)) (callbacks (Just un)))
-        readMeta         <- enact ws (cachingReading @(Meta x) (permissions (Just un)) (callbacks (Just un)))
-        readMods         <- enact ws (cachingReading @(Mods x) readPermissions (callbacks (Just un)))
-        readUserVotes    <- enact ws (reading @(UserVotes x) (userVotesPermissions un) (callbacks (Just un)))
+    enact ws (cachingReading @(Discussion x) readPermissions (callbacks (Just un)))
+    enact ws (reading @(Comment x) (permissions (Just un)) (callbacks (Just un)))
+    enact ws (cachingReading @(Meta x) (permissions (Just un)) (callbacks (Just un)))
+    enact ws (cachingReading @(Mods x) readPermissions (callbacks (Just un)))
+    enact ws (reading @(UserVotes x) (userVotesPermissions un) (callbacks (Just un)))
 
-        publishComment   <- enact ws (publishing @(Comment x) (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
-        publishMeta      <- enact ws (cachingPublishing @(Meta x) (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
-        publishMods      <- enact ws (cachingPublishing @(Mods x) (modsPermissions un) (callbacks (Just un)) modsInteractions)
-        publishUserVotes <- enact ws (publishing @(UserVotes x) (userVotesPermissions un) (callbacks (Just un)) userVotesInteractions)
-        
-        pure do
-          repeal readResource
-          repeal publishResource
-          repeal readDiscussion
-          repeal readComment
-          repeal readMeta
-          repeal readMods
-          repeal readUserVotes
-          repeal publishComment
-          repeal publishMeta
-          repeal publishMods
-          repeal publishUserVotes
+    enact ws (publishing @(Comment x) (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (cachingPublishing @(Meta x) (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (cachingPublishing @(Mods x) (modsPermissions un) (callbacks (Just un)) modsInteractions)
+    enact ws (publishing @(UserVotes x) (userVotesPermissions un) (callbacks (Just un)) userVotesInteractions)
 
-      _ -> do
-        readResource   <- enact ws (reading @x readPermissions (callbacks Nothing))
-        readDiscussion <- enact ws (cachingReading @(Discussion x) readPermissions (callbacks Nothing))
-        readMeta       <- enact ws (cachingReading @(Meta x) readPermissions (callbacks Nothing))
-        readMods       <- enact ws (cachingReading @(Mods x) readPermissions (callbacks Nothing))
+  _ -> void do
+    enact ws (reading @x readPermissions (callbacks Nothing))
+    enact ws (cachingReading @(Discussion x) readPermissions (callbacks Nothing))
+    enact ws (cachingReading @(Meta x) readPermissions (callbacks Nothing))
+    enact ws (cachingReading @(Mods x) readPermissions (callbacks Nothing))
 
-        pure do
-          repeal readResource
-          repeal readDiscussion
-          repeal readMeta
-          repeal readMods
+defaultRemoveWithDiscussion
+  :: forall (x :: *). 
+    ( Typeable x, DefaultPermissions x, DefaultCallbacks x
+    , DefaultPermissions (Comment x), DefaultPermissions (Meta x)
+    , DefaultCallbacks (Discussion x), DefaultCallbacks (Comment x), DefaultCallbacks (Meta x), DefaultCallbacks (Mods x), DefaultCallbacks (UserVotes x)
+    , DefaultInteractions (Comment x), DefaultInteractions (Meta x)
+    , Conjurable x
+    , Conjurable (Meta x)
+    , Conjurable (Comment x)
+    ) => WebSocket -> IO ()
+defaultRemoveWithDiscussion ws = do
+  WS.remove ws (readingAPI @x)
+  WS.remove ws (publishingAPI @x)
+  WS.remove ws (readingAPI @(Discussion x))
+  WS.remove ws (readingAPI @(Comment x))
+  WS.remove ws (readingAPI @(Meta x))
+  WS.remove ws (readingAPI @(Mods x))
+  WS.remove ws (readingAPI @(UserVotes x))
+  WS.remove ws (publishingAPI @(Comment x))
+  WS.remove ws (publishingAPI @(Meta x))
+  WS.remove ws (publishingAPI @(Mods x))
+  WS.remove ws (publishingAPI @(UserVotes x))
 
 defaultServeCaching 
   :: forall x. 
     ( DefaultPermissions x, DefaultCallbacks x
     , Conjurable x
-    ) => WebSocket -> Maybe Username -> [View]
-defaultServeCaching ws mun =
-  [ useEffectWith' (effect mun) mun Null ]
-  where
-    effect = \case
-      Just un -> do
-        r <- enact ws (cachingReading @x readPermissions (callbacks (Just un)))
-        p <- enact ws (cachingPublishing @x (permissions (Just un)) (callbacks (Just un)) def)
-        pure do
-          repeal r
-          repeal p
+    ) => WebSocket -> Maybe Username -> IO ()
+defaultServeCaching ws = \case
+  Just un -> void do
+    enact ws (cachingReading @x readPermissions (callbacks (Just un)))
+    enact ws (cachingPublishing @x (permissions (Just un)) (callbacks (Just un)) def)
 
-      _ -> do
-        r <- enact ws (cachingReading @x readPermissions (callbacks Nothing))
-        pure do
-          repeal r
+  _ -> void do
+    enact ws (cachingReading @x readPermissions (callbacks Nothing))
 
 defaultServeCachingWithDiscussion
   :: forall x. 
@@ -313,50 +332,28 @@ defaultServeCachingWithDiscussion
     , Conjurable x
     , Conjurable (Meta x)
     , Conjurable (Comment x)
-    ) => Proxy x -> WebSocket -> Maybe Username -> [View]
-defaultServeCachingWithDiscussion _ ws mun =
-  [ useEffectWith' (effect mun) mun Null ]
-  where
-    effect = \case
-      Just un -> do
-        readResource     <- enact ws (cachingReading @x readPermissions (callbacks (Just un)))
-        publishResource  <- enact ws (cachingPublishing @x (permissions (Just un)) (callbacks (Just un)) def)
+    ) => WebSocket -> Maybe Username -> IO ()
+defaultServeCachingWithDiscussion ws = \case
+  Just un -> void do
+    enact ws (cachingReading @x readPermissions (callbacks (Just un)))
+    enact ws (cachingPublishing @x (permissions (Just un)) (callbacks (Just un)) def)
 
-        readDiscussion   <- enact ws (cachingReading @(Discussion x) readPermissions (callbacks (Just un)))
-        readComment      <- enact ws (reading @(Comment x) (permissions (Just un)) (callbacks (Just un)))
-        readMeta         <- enact ws (cachingReading @(Meta x) (permissions (Just un)) (callbacks (Just un)))
-        readMods         <- enact ws (cachingReading @(Mods x) readPermissions (callbacks (Just un)))
-        readUserVotes    <- enact ws (reading @(UserVotes x) (userVotesPermissions un) (callbacks (Just un)))
+    enact ws (cachingReading @(Discussion x) readPermissions (callbacks (Just un)))
+    enact ws (reading @(Comment x) (permissions (Just un)) (callbacks (Just un)))
+    enact ws (cachingReading @(Meta x) (permissions (Just un)) (callbacks (Just un)))
+    enact ws (cachingReading @(Mods x) readPermissions (callbacks (Just un)))
+    enact ws (reading @(UserVotes x) (userVotesPermissions un) (callbacks (Just un)))
 
-        publishComment   <- enact ws (publishing @(Comment x) (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
-        publishMeta      <- enact ws (cachingPublishing @(Meta x) (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
-        publishMods      <- enact ws (cachingPublishing @(Mods x) (modsPermissions un) (callbacks (Just un)) modsInteractions)
-        publishUserVotes <- enact ws (publishing @(UserVotes x) (userVotesPermissions un) (callbacks (Just un)) userVotesInteractions)
-               
-        pure do
-          repeal readResource
-          repeal publishResource
-          repeal readDiscussion
-          repeal readComment
-          repeal readMeta
-          repeal readMods
-          repeal readUserVotes
-          repeal publishComment
-          repeal publishMeta
-          repeal publishMods
-          repeal publishUserVotes
-
-      _ -> do
-        readResource   <- enact ws (cachingReading @x readPermissions (callbacks Nothing))
-        readDiscussion <- enact ws (cachingReading @(Discussion x) readPermissions (callbacks Nothing))
-        readMeta       <- enact ws (cachingReading @(Meta x) readPermissions (callbacks Nothing))
-        readMods       <- enact ws (cachingReading @(Mods x) readPermissions (callbacks Nothing))
-
-        pure do
-          repeal readResource
-          repeal readDiscussion
-          repeal readMeta
-          repeal readMods
+    enact ws (publishing @(Comment x) (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (cachingPublishing @(Meta x) (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (cachingPublishing @(Mods x) (modsPermissions un) (callbacks (Just un)) modsInteractions)
+    enact ws (publishing @(UserVotes x) (userVotesPermissions un) (callbacks (Just un)) userVotesInteractions)
+           
+  _ -> void do
+    enact ws (cachingReading @x readPermissions (callbacks Nothing))
+    enact ws (cachingReading @(Discussion x) readPermissions (callbacks Nothing))
+    enact ws (cachingReading @(Meta x) readPermissions (callbacks Nothing))
+    enact ws (cachingReading @(Mods x) readPermissions (callbacks Nothing))
 
 class DefaultPermissions x where
   permissions :: Maybe Username -> Permissions x

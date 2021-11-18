@@ -8,6 +8,7 @@ import Pure.Convoker
 import Pure.Data.JSON (ToJSON(..),FromJSON(..))
 import Pure.Elm.Application
 import Pure.Elm.Component (Component)
+import Pure.Hooks (provide)
 import Pure.WebSocket
 import Pure.WebSocket.Cache
 import Pure.Maybe
@@ -18,16 +19,16 @@ import Data.Bool
 import Data.Typeable
 import System.IO
 
-data Config = Config
+data Config a = Config
   { host      :: String
   , port      :: Int
   , onStartup :: WebSocket -> IO ()
   , login     :: WebSocket -> View
   , fallback  :: WebSocket -> View
-  , layout    :: WebSocket -> SomeRoute -> View -> View
+  , layout    :: WebSocket -> SomeRoute a -> View -> View
   }
 
-data SomeRoute 
+data SomeRoute a
   = forall resource. 
     ( Typeable resource
     , Theme resource
@@ -38,39 +39,45 @@ data SomeRoute
     , FromJSON (C.Preview resource)
     , FromJSON (C.Product resource)
     , C.Formable (C.Resource resource)
-    , Component (C.Preview resource)
-    , Component (C.Product resource)
+    , C.Readable resource
+    , C.Updatable a resource
+    , C.Listable resource
+    , C.Creatable a resource
     ) => SomeRoute (C.Route resource)
 
-fromSomeRoute :: forall resource. Typeable resource => SomeRoute -> Maybe (C.Route resource)
+fromSomeRoute :: forall a resource. Typeable resource => SomeRoute a -> Maybe (C.Route resource)
 fromSomeRoute (SomeRoute rt) = cast rt
 
 class Client a where
   type Domains a :: [*]
 
-client :: forall (a :: *) domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Theme (App a)) => Config -> IO ()
+client :: forall (a :: *) domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Theme (App a)) => Config a -> IO ()
 client cfg@Config {..} = do
   ws <- clientWS host port
+  provide ws
   hSetBuffering stdout LineBuffering
   inject body (cache ws)
   inject body (execute (App ws cfg :: App a))
 
-data App (a :: *) = App WebSocket Config
+data App (a :: *) = App WebSocket (Config a)
 
 instance (Domains a ~ domains, RouteMany a domains, Typeable a, Theme (App a)) => Application (App a) where
   data Msg (App a) = Startup
 
+  initialize (App socket Config {..}) = do
+    forkIO (void (authenticate @a socket))
+    pure undefined
+
   startup = [Startup]
 
   upon Startup _ (App socket Config {..}) mdl = do
-    forkIO (void (authenticate @a socket))
     onStartup socket
     pure mdl
 
   data Route (App a) 
     = NoneR 
     | LoginR
-    | AppR SomeRoute
+    | AppR (SomeRoute a)
     
   route _new _old _app model = do
     forkIO do
@@ -112,8 +119,10 @@ class RouteMany a as where
       , FromJSON (C.Preview resource)
       , FromJSON (C.Product resource)
       , C.Formable (C.Resource resource)
-      , Component (C.Preview resource)
-      , Component (C.Product resource)
+      , C.Readable resource
+      , C.Updatable a resource
+      , C.Listable resource
+      , C.Creatable a resource
       ) => C.Route resource -> Route (App a)
     ) -> Routing (Route (App a)) x 
 
@@ -128,8 +137,10 @@ instance
   , FromJSON (C.Preview x)
   , FromJSON (C.Product x)
   , C.Formable (C.Resource x)
-  , Component (C.Preview x)
-  , Component (C.Product x)
+  , C.Readable x
+  , C.Updatable a x
+  , C.Listable x
+  , C.Creatable a x
   ) => RouteMany a (x : xs) where
   routeMany lift = do
     Pure.Magician.Client.route @x (AppR . SomeRoute)
