@@ -1,16 +1,20 @@
-{-# language AllowAmbiguousTypes, ScopedTypeVariables, UndecidableInstances #-}
-{-# OPTIONS_GHC -fno-warn-missing-methods #-}
-module Pure.Magician.Client where
+module Pure.Magician.Client (module Pure.Magician.Client, Config(..), module Export) where
 
-import Pure.Auth (Token(..),authenticate,withToken)
+import Pure.Magician.Client.Config
+import Pure.Magician.Client.Restore
+import Pure.Magician.Resources as Export
+
+import Pure.Auth (Access(..),Token(..),authenticate,withToken,authorize,defaultOnRegistered)
+import Pure.Conjurer as C hiding (Route,Routable)
 import qualified Pure.Conjurer as C
 import Pure.Convoker
-import Pure.Data.JSON (ToJSON(..),FromJSON(..))
+import Pure.Data.JSON (ToJSON,FromJSON)
 import Pure.Elm.Application
-import Pure.Elm.Component (Component)
-import Pure.Hooks (provide)
+import Pure.Hooks (provide,useContext)
+import Pure.Router (dispatch,path)
+import qualified Pure.Router as R
 import Pure.WebSocket
-import Pure.WebSocket.Cache
+import qualified Pure.WebSocket.Cache as WS
 import Pure.Maybe
 
 import Control.Concurrent
@@ -19,145 +23,108 @@ import Data.Bool
 import Data.Typeable
 import System.IO
 
-data Config a = Config
-  { host      :: String
-  , port      :: Int
-  , onStartup :: WebSocket -> IO ()
-  , login     :: WebSocket -> View
-  , fallback  :: WebSocket -> View
-  , layout    :: WebSocket -> SomeRoute a -> View -> View
-  }
+newtype Socket a = Socket WebSocket
 
-data SomeRoute a
-  = forall resource. 
-    ( Typeable resource
-    , Theme resource
-    , C.Routable resource
-    , FromJSON (C.Resource resource), ToJSON (C.Resource resource), Default (C.Resource resource)
-    , FromJSON (C.Context resource), ToJSON (C.Context resource), C.Pathable (C.Context resource), Eq (C.Context resource)
-    , FromJSON (C.Name resource), ToJSON (C.Name resource), C.Pathable (C.Name resource), Eq (C.Name resource)
-    , FromJSON (C.Preview resource)
-    , FromJSON (C.Product resource)
-    , C.Formable (C.Resource resource)
-    , C.Readable resource
-    , C.Updatable a resource
-    , C.Listable resource
-    , C.Creatable a resource
-    ) => SomeRoute (C.Route resource)
+useSocket :: forall a. Typeable (a :: *) => (WebSocket -> View) -> View
+useSocket f = useContext (\((Socket ws) :: Pure.Magician.Client.Socket a) -> f ws)
 
-fromSomeRoute :: forall a resource. Typeable resource => SomeRoute a -> Maybe (C.Route resource)
-fromSomeRoute (SomeRoute rt) = cast rt
-
-class Client a where
-  type Domains a :: [*]
-
-client :: forall (a :: *) domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Theme (App a)) => Config a -> IO ()
+client :: forall a domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Theme (App a)) => Config a -> IO ()
 client cfg@Config {..} = do
   ws <- clientWS host port
-  provide ws
+  provide (Socket @a ws)
   hSetBuffering stdout LineBuffering
-  inject body (cache ws)
+  -- TODO: make pure-websocket-cache amenable to role domains
+  inject body (WS.cache ws)
   inject body (execute (App ws cfg :: App a))
 
-data App (a :: *) = App WebSocket (Config a)
+data App a = App WebSocket (Config a)
 
-instance (Domains a ~ domains, RouteMany a domains, Typeable a, Theme (App a)) => Application (App a) where
+instance {-# INCOHERENT #-} Typeable a => Theme (App a)
+
+instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Theme (App a)) => Application (App a) where
   data Msg (App a) = Startup
 
-  initialize (App socket Config {..}) = do
-    forkIO (void (authenticate @a socket))
-    pure undefined
+  initialize (App socket Config {..}) = forkIO (void (authenticate @a socket)) >> pure undefined
 
   startup = [Startup]
 
-  upon Startup _ (App socket Config {..}) mdl = do
-    onStartup socket
-    pure mdl
+  upon Startup _ (App socket Config {..}) mdl = onStartup socket >> pure mdl
 
   data Route (App a) 
-    = NoneR 
+    = NoneR
     | LoginR
-    | AppR (SomeRoute a)
+    | ClientR (SomeRoute a)  
     
-  route _new _old _app model = do
-    forkIO do
-      void do
-        -- Should be sufficient for most devices?
-        -- The failure mode is simply not restoring 
-        -- the scroll position, which isn't too bad.
-        delay (Millisecond * 100)
-        addAnimation restoreScrollPosition
-    pure model
+  route _ _ _ mdl = restore >> pure mdl
 
   home = NoneR
 
   location = \case
     NoneR -> "/"
     LoginR -> "/login"
-    AppR (SomeRoute sr) -> C.location sr
+    ClientR (SomeRoute r) -> C.location r
 
-  routes = do
-    path "/login" (dispatch LoginR)
-    routeMany @a @(Domains a) (AppR . SomeRoute)
+  routes = routeAll @a
 
   view rt (App socket Config { fallback, login, layout }) _ =
     Div <| Themed @(App a) |>
       [ case rt of
-          NoneR -> fallback socket
-          LoginR -> login socket
-          AppR sr@(SomeRoute rt) -> layout socket sr (C.pages @a socket rt)
+          NoneR -> fallback
+          LoginR -> login
+          ClientR sr@(SomeRoute rt) -> layout sr (pages @a socket rt)
       ]
 
-class RouteMany a as where
-  routeMany :: 
-    ( forall resource. 
-      ( C.Routable resource 
-      , Theme resource
-      , FromJSON (C.Resource resource), ToJSON (C.Resource resource), Default (C.Resource resource)
-      , FromJSON (C.Context resource), ToJSON (C.Context resource), C.Pathable (C.Context resource), Eq (C.Context resource)
-      , FromJSON (C.Name resource), ToJSON (C.Name resource), C.Pathable (C.Name resource), Eq (C.Name resource)
-      , FromJSON (C.Preview resource)
-      , FromJSON (C.Product resource)
-      , C.Formable (C.Resource resource)
-      , C.Readable resource
-      , C.Updatable a resource
-      , C.Listable resource
-      , C.Creatable a resource
-      ) => C.Route resource -> Route (App a)
-    ) -> Routing (Route (App a)) x 
+instance Typeable a => Default (Config a) where
+  def = Config "127.0.0.1" 8081 def 
+    (useSocket @a $ \socket -> authorize @a (Access socket id defaultOnRegistered) (\(Token (un,_)) -> producing (R.goto "/") (\_ -> Null)))
+    def
+    (\_ v -> v)
 
-instance 
-  ( Typeable a
-  , Routable x
-  , RouteMany a xs
-  , Theme x
-  , FromJSON (C.Resource x), ToJSON (C.Resource x), Default (C.Resource x)
-  , FromJSON (C.Context x), ToJSON (C.Context x), C.Pathable (C.Context x), Eq (C.Context x)
-  , FromJSON (C.Name x), ToJSON (C.Name x), C.Pathable (C.Name x), Eq (C.Name x)
-  , FromJSON (C.Preview x)
-  , FromJSON (C.Product x)
-  , C.Formable (C.Resource x)
-  , C.Readable x
-  , C.Updatable a x
-  , C.Listable x
-  , C.Creatable a x
-  ) => RouteMany a (x : xs) where
-  routeMany lift = do
-    Pure.Magician.Client.route @x (AppR . SomeRoute)
-    routeMany @a @xs lift
+class Client (a :: *) where
+  type Domains a :: [*]
+  type Domains a = Resources a
+
+routeAll :: forall a x. (Client a, RouteMany a (Domains a)) => Routing (Route (App a)) x
+routeAll = do
+  path "/login" (dispatch LoginR)
+  routeMany @a @(Domains a)
+
+class RouteMany (a :: *) (as :: [*]) where
+  routeMany :: Routing (Route (App a)) x
+
+instance (Routable a x, RouteMany a xs) => RouteMany a (x : xs) where
+  routeMany = Pure.Magician.Client.route @a @x >> routeMany @a @xs
 
 instance RouteMany a '[] where
-  routeMany _ = dispatch NoneR
+  routeMany = dispatch NoneR
 
-class Routable a where
-  route :: (C.Route a -> route) -> Routing route ()
+class Routable a resource where
+  route :: Routing (Route (App a)) ()
 
-instance {-# INCOHERENT #-} (Typeable a, C.Routable a) => Routable a where
-  route = C.routes
+instance {-# OVERLAPPABLE #-}
+  ( Typeable resource
+  , Client a
+  , Domains a ~ domains
+  , Elem resource domains ~ True
+  , Theme resource
+  , C.Routable resource
+  , FromJSON (Resource resource), ToJSON (Resource resource), Default (Resource resource)
+  , FromJSON (Context resource), ToJSON (Context resource), Pathable (Context resource), Eq (Context resource)
+  , FromJSON (Name resource), ToJSON (Name resource), Pathable (Name resource), Eq (Name resource)
+  , FromJSON (Preview resource)
+  , FromJSON (Product resource)
+  , Formable (Resource resource)
+  , Readable resource
+  , Updatable a resource
+  , Listable resource
+  , Creatable a resource
+  ) => Routable a resource 
+    where
+      route = C.routes @resource (ClientR . SomeRoute)
 
 getAdmins :: IO (Product Admins)
 getAdmins =
-  req Cached (C.readingAPI @Admins) (C.readProduct @Admins) (AdminsContext,AdminsName) >>= \case
+  WS.req WS.Cached (readingAPI @Admins) (readProduct @Admins) (AdminsContext,AdminsName) >>= \case
     Nothing -> pure (Admins [])
     Just as -> pure as
 

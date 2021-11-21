@@ -25,13 +25,17 @@ library
     , pure-hooks
     , pure-json
     , pure-maybe
+    , pure-router
     , pure-sorcerer
     , pure-txt
     , pure-websocket
     , pure-websocket-cache
 
   exposed-modules:
+    Pure.Magician.Resources
     Pure.Magician.Client
+    Pure.Magician.Client.Config
+    Pure.Magician.Client.Restore
 
   if !(impl(ghcjs))
 
@@ -41,6 +45,11 @@ library
 
     exposed-modules:
       Pure.Magician.Server
+      Pure.Magician.Server.Cache
+      Pure.Magician.Server.Config
+      Pure.Magician.Server.Listen
+      Pure.Magician.Server.Serve
+      Pure.Magician.Server.Static
 
   default-language: Haskell2010
 
