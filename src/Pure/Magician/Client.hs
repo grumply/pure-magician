@@ -1,7 +1,7 @@
 module Pure.Magician.Client (module Pure.Magician.Client, Config(..), module Export) where
 
 import Pure.Magician.Client.Config
-import Pure.Magician.Client.Restore
+import Pure.Magician.Client.Restore as Export
 import Pure.Magician.Resources as Export
 
 import Pure.Auth (Access(..),Token(..),authenticate,withToken,authorize,defaultOnRegistered)

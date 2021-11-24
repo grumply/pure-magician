@@ -94,6 +94,10 @@ type family ServeConstraints a (discussion :: Bool) :: Constraint where
     , Previewable (Meta resource)
     , Producible (Meta resource)
     , Producible (Comment resource)
+    , Processable (Meta resource)
+    , Processable (Comment resource)
+    , Amendable (Meta resource)
+    , Amendable (Comment resource)
     )
   ServeConstraints resource False = 
     ( Typeable resource
@@ -103,6 +107,8 @@ type family ServeConstraints a (discussion :: Bool) :: Constraint where
     , Conjurable resource
     , Previewable resource
     , Producible resource
+    , Processable resource
+    , Amendable resource
     )
 
 -- Default instance for a uncached resource with discussion.
@@ -122,7 +128,7 @@ defaultServeWithDiscussion ws = \case
       (permissions (Just un))
       (permissions (Just un))
       (callbacks (Just un))
-      (extendCommentCallbacks (permissions (Just un)) (callbacks (Just un)) (callbacks (Just un)))
+      (extendCommentCallbacks fullPermissions (callbacks (Just un)) (callbacks (Just un)))
       (callbacks (Just un))
       (callbacks (Just un))
       (callbacks (Just un))
@@ -130,6 +136,7 @@ defaultServeWithDiscussion ws = \case
       (interactions (Just un))
 
   _ -> void do
+    enact ws (reading @x readPermissions (callbacks Nothing))
     Convoker.unauthenticatedEndpoints @x ws
       (callbacks Nothing)
       (callbacks Nothing)

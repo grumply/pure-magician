@@ -1,6 +1,13 @@
 module Pure.Magician.Resources where
 
 {-
+Note that this module treats lists as set-like. We rely on type-level lists for
+convenience, so some type families, like `Remove`, don't short-circuit like
+their true set-oriented counterparts would. Reasonable uses of these type-level
+functions should be unlikely to notice this.
+-}
+
+{-
 The goal here is to be able to define a Resources type instance in a shared
 module and use that type-level list as a basis for defining caches, static 
 generation, and discussions on the backend, and use it for defining domains
@@ -42,6 +49,11 @@ type family Subset (xs :: [*]) (ys :: [*]) :: Bool where
   Subset (a : as) ys = And (Elem a ys) (Subset as ys)
   Subset '[] ys = True
 
+type family Add (x :: *) (xs :: [*]) :: [*] where
+  Add x '[] = x : '[]
+  Add x (x : ys) = x : ys
+  Add x (y : ys) = y : Add x ys
+
 type family Remove (x :: *) (xs :: [*]) :: [*] where
   Remove x '[] = '[]
   Remove x (x : ys) = Remove x ys
@@ -51,3 +63,6 @@ type family (\\) (xs :: [*]) (ys :: [*]) :: [*] where
   xs \\ '[] = xs
   xs \\ (y : ys) = (Remove y xs) \\ ys
 
+type family (++) (xs :: [*]) (ys :: [*]) :: [*] where
+  xs ++ '[] = xs
+  xs ++ (y : ys) = (Add y xs) ++ ys
