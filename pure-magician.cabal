@@ -30,6 +30,7 @@ library
     , pure-txt
     , pure-websocket
     , pure-websocket-cache
+    , hashable
 
   exposed-modules:
     Pure.Magician.Resources
@@ -45,6 +46,7 @@ library
 
     exposed-modules:
       Pure.Magician.Server
+      Pure.Magician.Server.Analytics
       Pure.Magician.Server.Cache
       Pure.Magician.Server.Config
       Pure.Magician.Server.Listen

@@ -16,20 +16,21 @@ cacheAll = cacheMany @a @(Caches a)
 class CacheMany a (xs :: [*]) where
   cacheMany :: IO ()
 
-instance (Cacheable a x (Elem x (Discussions a)) (Elem x (Caches a)), CacheMany a xs) => CacheMany a (x : xs) where
-  cacheMany = cache @a @x @(Elem x (Discussions a)) @(Elem x (Caches a)) >> cacheMany @a @xs
+instance (Cacheable a x (Elem x (Discussions a)), CacheMany a xs) => CacheMany a (x : xs) where
+  cacheMany = cache @a @x @(Elem x (Discussions a)) >> cacheMany @a @xs
 
 instance CacheMany a '[] where
-  cacheMany = pure ()
+  cacheMany = do
+    Conjurer.cache @Admins
 
-class Cacheable (a :: *) (resource :: *) (discussion :: Bool) (cache :: Bool) where
+class Cacheable (a :: *) (resource :: *) (discussion :: Bool) where
   cache :: IO ()
 
 -- Default instance for a resource without discussion.
 instance {-# OVERLAPPABLE #-} 
   ( Typeable resource 
   , Conjurable resource
-  ) => Cacheable a resource False True where
+  ) => Cacheable a resource False where
   cache = do
     Conjurer.cache @resource
   
@@ -39,11 +40,7 @@ instance {-# OVERLAPPABLE #-}
   , Conjurable resource
   , ToJSON (Product (Meta resource)), FromJSON (Product (Meta resource))
   , ToJSON (Preview (Meta resource)), FromJSON (Preview (Meta resource))
-  ) => Cacheable a resource True True where
+  ) => Cacheable a resource True where
   cache = do
     Conjurer.cache @resource
     Convoker.convokerCache @resource
-
-instance Typeable resource => Cacheable a resource discussion False where
-  cache = do
-    pure ()

@@ -3,6 +3,7 @@ module Pure.Magician.Server.Serve where
 import Pure.Magician.Resources
 
 import Pure.Auth (Username(..))
+import Pure.Conjurer.Analytics
 import Pure.Conjurer as Conjurer
 import Pure.Convoker as Convoker
 import Pure.Convoker.UserVotes
@@ -62,24 +63,27 @@ class Server (a :: *) where
 
   type Discussions a :: [*]
   type Discussions a = '[]
+  
+  type Analyze a :: [*]
+  type Analyze a = '[]
 
 --------------------------------------------------------------------------------
 
-serveAll :: forall a. (Server a, ServeMany a (Resources a)) => WebSocket -> Maybe Username -> IO ()
+serveAll :: forall a. (Server a, ServeMany a (Resources a)) => WebSocket -> SessionId -> Maybe Username -> IO ()
 serveAll = serveMany @a @(Resources a)
 
 class ServeMany (a :: *) (xs :: [*]) where
-  serveMany :: WebSocket -> Maybe Username -> IO ()
+  serveMany :: WebSocket -> SessionId -> Maybe Username -> IO ()
 
 instance ServeMany a '[] where
-  serveMany socket mu = void do
-    defaultServe @Admins socket mu 
+  serveMany socket sid mu = void do
+    defaultServe @Admins socket sid mu 
 
-instance (Server a, Servable a x (Elem x (Discussions a)), ServeMany a xs) => ServeMany a (x : xs) where 
-  serveMany ws mun = serve @a @x @(Elem x (Discussions a)) ws mun >> serveMany @a @xs ws mun
+instance (Server a, Servable a x (Elem x (Discussions a)) (Elem x (Analyze a)), ServeMany a xs) => ServeMany a (x : xs) where 
+  serveMany ws sid mun = serve @a @x @(Elem x (Discussions a)) @(Elem x (Analyze a)) ws sid mun >> serveMany @a @xs ws sid mun
 
-class Servable (a :: *) (resource :: *) (discuss :: Bool) where
-  serve :: WebSocket -> Maybe Username -> IO ()
+class Servable (a :: *) (resource :: *) (discuss :: Bool) (analyze :: Bool) where
+  serve :: WebSocket -> SessionId -> Maybe Username -> IO ()
 
 type family ServeConstraints a (discussion :: Bool) :: Constraint where
   ServeConstraints resource True = 
@@ -111,16 +115,49 @@ type family ServeConstraints a (discussion :: Bool) :: Constraint where
     , Amendable resource
     )
 
--- Default instance for a uncached resource with discussion.
-instance ( ServeConstraints resource True ) => Servable a resource True where
+-- Default instance for a uncached resource with discussion with analyze.
+instance ( ServeConstraints resource True ) => Servable a resource True True where
+  serve = defaultServeWithDiscussionWithAnalyze @resource
+
+-- Default instance for a uncached resource with discussion without analyze.
+instance ( ServeConstraints resource True ) => Servable a resource True False where
   serve = defaultServeWithDiscussion @resource
 
--- Default instance for a uncached resource without discussion.
-instance ( ServeConstraints resource False ) => Servable a resource False where
+-- Default instance for a uncached resource without discussion with analyze.
+instance ( ServeConstraints resource False ) => Servable a resource False True where
+  serve = defaultServeWithAnalyze @resource
+
+-- Default instance for a uncached resource without discussion without analyze.
+instance ( ServeConstraints resource False ) => Servable a resource False False where
   serve = defaultServe @resource
 
-defaultServeWithDiscussion :: forall x.  ( ServeConstraints x True ) => WebSocket -> Maybe Username -> IO ()
-defaultServeWithDiscussion ws = \case
+defaultServeWithDiscussionWithAnalyze :: forall x.  ( ServeConstraints x True ) => WebSocket -> SessionId -> Maybe Username -> IO ()
+defaultServeWithDiscussionWithAnalyze ws sid = \case
+  Just un -> void do
+    enact ws (reading @x readPermissions (addAnalytics sid (callbacks (Just un))))
+    enact ws (publishing @x (permissions (Just un)) (addDiscussionCreationCallbacks [un] (callbacks (Just un))) (interactions (Just un)))
+    enact ws (analytics @x (permissions (Just un)))
+    Convoker.authenticatedEndpoints @x ws un 
+      (permissions (Just un))
+      (permissions (Just un))
+      (callbacks (Just un))
+      (extendCommentCallbacks fullPermissions (callbacks (Just un)) (callbacks (Just un)))
+      (callbacks (Just un))
+      (callbacks (Just un))
+      (callbacks (Just un))
+      (interactions (Just un))
+      (interactions (Just un))
+
+  _ -> void do
+    enact ws (reading @x readPermissions (addAnalytics sid (callbacks Nothing)))
+    enact ws (analytics @x (permissions Nothing))
+    Convoker.unauthenticatedEndpoints @x ws
+      (callbacks Nothing)
+      (callbacks Nothing)
+      (callbacks Nothing)
+
+defaultServeWithDiscussion :: forall x.  ( ServeConstraints x True ) => WebSocket -> SessionId -> Maybe Username -> IO ()
+defaultServeWithDiscussion ws _ = \case
   Just un -> void do
     enact ws (reading @x readPermissions (callbacks (Just un)))
     enact ws (publishing @x (permissions (Just un)) (addDiscussionCreationCallbacks [un] (callbacks (Just un))) (interactions (Just un)))
@@ -142,8 +179,20 @@ defaultServeWithDiscussion ws = \case
       (callbacks Nothing)
       (callbacks Nothing)
 
-defaultServe :: forall x.  ( ServeConstraints x False ) => WebSocket -> Maybe Username -> IO ()
-defaultServe ws = \case
+
+defaultServeWithAnalyze :: forall x.  ( ServeConstraints x False ) => WebSocket -> SessionId -> Maybe Username -> IO ()
+defaultServeWithAnalyze ws sid = \case
+  Just un -> void do
+    enact ws (reading @x readPermissions (addAnalytics sid (callbacks (Just un))))
+    enact ws (publishing @x (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (analytics @x (permissions (Just un)))
+
+  _ -> void do
+    enact ws (analytics @x (permissions Nothing))
+    enact ws (reading @x readPermissions (addAnalytics sid (callbacks Nothing)))
+
+defaultServe :: forall x.  ( ServeConstraints x False ) => WebSocket -> SessionId -> Maybe Username -> IO ()
+defaultServe ws _ = \case
   Just un -> void do
     enact ws (reading @x readPermissions (callbacks (Just un)))
     enact ws (publishing @x (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
@@ -203,4 +252,3 @@ defaultRemoveWithDiscussion ws = do
   WS.remove ws (publishingAPI @(Meta x))
   WS.remove ws (publishingAPI @(Mods x))
   WS.remove ws (publishingAPI @(UserVotes x))
-

@@ -39,15 +39,25 @@ type family And (x :: Bool) (y :: Bool) :: Bool where
   And x False = False
   And x y = True
 
+type family Not (x :: Bool) where
+  Not True  = False
+  Not False = True
+
+type family Empty (xs :: [*]) :: Bool where
+  Empty xs = Subset '[] xs
+
+type family Nonempty (xs :: [*]) :: Bool where
+  Nonempty xs = Not (Empty xs)
+
 type family Elem (x :: *) (ys :: [*]) :: Bool where
   Elem x '[] = False
   Elem x (x : ys) = True
   Elem x (y : ys) = Elem x ys
 
 type family Subset (xs :: [*]) (ys :: [*]) :: Bool where
+  Subset '[] ys = True
   Subset as as = True
   Subset (a : as) ys = And (Elem a ys) (Subset as ys)
-  Subset '[] ys = True
 
 type family Add (x :: *) (xs :: [*]) :: [*] where
   Add x '[] = x : '[]
@@ -66,3 +76,12 @@ type family (\\) (xs :: [*]) (ys :: [*]) :: [*] where
 type family (++) (xs :: [*]) (ys :: [*]) :: [*] where
   xs ++ '[] = xs
   xs ++ (y : ys) = (Add y xs) ++ ys
+
+class Materialize (bool :: Bool) where
+  materialize :: Bool
+
+instance Materialize True where
+  materialize = True
+
+instance Materialize False where
+  materialize = False

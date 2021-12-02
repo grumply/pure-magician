@@ -3,30 +3,52 @@ module Pure.Magician.Server.Listen where
 import Pure.Magician.Resources
 import Pure.Magician.Server.Serve
 
-import Pure.Sorcerer (Listener)
+import Pure.Auth (authDB)
+import Pure.Sorcerer (sorcerer)
 import Pure.Conjurer (Conjurable,conjure)
-import Pure.Convoker (Convokable,convoke)
+import Pure.Conjurer.Analytics
+import Pure.Convoker (Admins,Convokable,convoke)
 
-listenAll :: forall a. (Server a, ListenMany a (Resources a)) => [Listener]
+import Data.Typeable
+
+listenAll :: forall a. (Server a, ListenMany a (Resources a)) => IO ()
 listenAll = listenMany @a @(Resources a)
 
 class ListenMany (a :: *) (xs :: [*]) where
-  listenMany :: [Listener]
+  listenMany :: IO ()
 
-instance (Listenable a x (Elem x (Discussions a)), ListenMany a xs) => ListenMany a (x : xs) where
-  listenMany = listen @a @x @(Elem x (Discussions a)) ++ listenMany @a @xs
+instance (Listenable a x (Elem x (Discussions a)) (Elem x (Analyze a)), ListenMany a xs) => ListenMany a (x : xs) where
+  listenMany = listen @a @x @(Elem x (Discussions a)) @(Elem x (Analyze a)) >> listenMany @a @xs
 
-instance ListenMany a '[] where
-  listenMany = []
+instance Typeable a => ListenMany a '[] where
+  listenMany = do
+    authDB @a 
+    conjure @Admins 
+    sorcerer @SessionMsg @'[Session]
+    sorcerer @SessionsMsg @'[Sessions]
 
-class Listenable (a :: *) (resource :: *) (discussion :: Bool) where
-  listen :: [Listener]
+class Listenable (a :: *) (resource :: *) (discussion :: Bool) (analyze :: Bool) where
+  listen :: IO ()
 
--- Default listeners for resource without discussion.
-instance {-# OVERLAPPABLE #-} (Conjurable resource) => Listenable a resource False where
+-- Default listeners for resource without discussion, not analyzed.
+instance {-# OVERLAPPABLE #-} (Conjurable resource) => Listenable a resource False False where
   listen = conjure @resource
 
--- Default listeners for resource with discussion.
-instance {-# OVERLAPPABLE #-} (Conjurable resource, Convokable resource) => Listenable a resource True where
-  listen = conjure @resource ++ convoke @resource 
+-- Default listeners for resource without discussion, analyzed.
+instance {-# OVERLAPPABLE #-} (Conjurable resource) => Listenable a resource False True where
+  listen = do
+    sorcerer @(AnalyticsMsg resource) @'[Analytics] 
+    conjure @resource
 
+-- Default listeners for resource with discussion, not analyzed.
+instance {-# OVERLAPPABLE #-} (Conjurable resource, Convokable resource) => Listenable a resource True False where
+  listen = do
+    conjure @resource 
+    convoke @resource 
+
+-- Default listeners for resource with discussion, analyzed.
+instance {-# OVERLAPPABLE #-} (Conjurable resource, Convokable resource) => Listenable a resource True True where
+  listen = do
+    sorcerer @(AnalyticsMsg resource) @'[Analytics] 
+    conjure @resource 
+    convoke @resource 
