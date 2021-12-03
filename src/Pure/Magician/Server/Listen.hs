@@ -37,7 +37,9 @@ instance {-# OVERLAPPABLE #-} (Conjurable resource) => Listenable a resource Fal
 -- Default listeners for resource without discussion, analyzed.
 instance {-# OVERLAPPABLE #-} (Conjurable resource) => Listenable a resource False True where
   listen = do
-    sorcerer @(AnalyticsMsg resource) @'[Analytics] 
+    sorcerer @(GlobalAnalyticsMsg resource) @'[GlobalAnalytics] 
+    sorcerer @(ContextAnalyticsMsg resource) @'[ContextAnalytics] 
+    sorcerer @(ResourceAnalyticsMsg resource) @'[ResourceAnalytics] 
     conjure @resource
 
 -- Default listeners for resource with discussion, not analyzed.
@@ -49,6 +51,8 @@ instance {-# OVERLAPPABLE #-} (Conjurable resource, Convokable resource) => List
 -- Default listeners for resource with discussion, analyzed.
 instance {-# OVERLAPPABLE #-} (Conjurable resource, Convokable resource) => Listenable a resource True True where
   listen = do
-    sorcerer @(AnalyticsMsg resource) @'[Analytics] 
+    sorcerer @(GlobalAnalyticsMsg resource) @'[GlobalAnalytics] 
+    sorcerer @(ContextAnalyticsMsg resource) @'[ContextAnalytics] 
+    sorcerer @(ResourceAnalyticsMsg resource) @'[ResourceAnalytics] 
     conjure @resource 
     convoke @resource 
