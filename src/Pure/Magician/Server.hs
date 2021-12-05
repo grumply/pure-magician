@@ -44,7 +44,7 @@ serve
     , ServeMany a (Resources a)
     , CacheMany a (Caches a)
     , StaticMany a (Statics a)
-    , AnalyzeMany a (Analyze a)
+    , Analyzeable (Analyze a)
     ) => UserConfig a -> IO ()
 serve userConfig = do
   cfg@Config.Config {..} <- Config.getConfig
@@ -55,7 +55,7 @@ serve userConfig = do
     Just (Admins _) -> pure ()
     Nothing -> void (tryCreateAdmins [admin])
   cacheAll @a
-  analyzeAll @a (Minutes refresh 0)
+  analyze @a (Minutes refresh 0)
   inject body do
     case (,) <$> key <*> cert of
       Just (k,c) -> Server.SecureServer host port k c chain (run . WithSocket userConfig)
