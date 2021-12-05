@@ -86,7 +86,7 @@ instance (Typeable a, Server a, Component (Connection a), ServeMany a (Resources
     case msg of
     
       Shutdown -> do
-        recordEnd sid
+        recordEnd sid 
         pure (WithSocketModel userToken sid)
 
       Startup -> do

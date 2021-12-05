@@ -136,7 +136,7 @@ defaultServeWithDiscussionWithAnalyze ws sid = \case
   Just un -> void do
     ip <- fromWebSocket ws
     enact ws (reading @x readPermissions (addAnalytics sid ip (callbacks (Just un))))
-    enact ws (publishing @x (permissions (Just un)) (addDiscussionCreationCallbacks [un] (callbacks (Just un))) (interactions (Just un)))
+    enact ws (publishing @x (permissions (Just un)) (addAnalytics sid ip (addDiscussionCreationCallbacks [un] (callbacks (Just un)))) (interactions (Just un)))
     enact ws (analytics @x (permissions (Just un)))
     Convoker.authenticatedEndpoints @x ws un 
       (permissions (Just un))
@@ -187,7 +187,7 @@ defaultServeWithAnalyze ws sid = \case
   Just un -> void do
     ip <- fromWebSocket ws
     enact ws (reading @x readPermissions (addAnalytics sid ip (callbacks (Just un))))
-    enact ws (publishing @x (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (publishing @x (permissions (Just un)) (addAnalytics sid ip (callbacks (Just un))) (interactions (Just un)))
     enact ws (analytics @x (permissions (Just un)))
 
   _ -> void do
