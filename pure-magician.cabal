@@ -21,6 +21,7 @@ library
     , pure-auth
     , pure-conjurer
     , pure-convoker
+    , pure-core
     , pure-elm
     , pure-hooks
     , pure-json
@@ -35,7 +36,6 @@ library
   exposed-modules:
     Pure.Magician.Resources
     Pure.Magician.Client
-    Pure.Magician.Client.Config
     Pure.Magician.Client.Restore
 
   if !(impl(ghcjs))

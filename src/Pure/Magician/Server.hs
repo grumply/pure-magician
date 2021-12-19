@@ -16,7 +16,7 @@ import qualified Pure.Conjurer as Conjurer
 import Pure.Convoker as Convoker
 import Pure.Data.JSON (ToJSON(..),FromJSON(..))
 import Pure.Data.Txt as Txt
-import Pure.Elm.Component (Elm,Default(..),View,pattern Null,Component(..),inject,body,delay,pattern Minute,pattern Minutes,command,pattern SimpleHTML,(<||>))
+import Pure.Elm.Component (Elm,Default(..),View,pattern Null,Component(..),inject,body,delay,pattern Minute,pattern Minutes,pattern Milliseconds,command,pattern SimpleHTML,(<||>))
 import qualified Pure.Server as Server
 import Pure.WebSocket ( WebSocket, enact, repeal, clientWS, activate )
 import qualified Pure.WebSocket as WS
@@ -55,7 +55,7 @@ serve userConfig = do
     Just (Admins _) -> pure ()
     Nothing -> void (tryCreateAdmins [admin])
   cacheAll @a
-  analyze @a (Minutes refresh 0)
+  analyze @a (Milliseconds refresh 0)
   inject body do
     case (,) <$> key <*> cert of
       Just (k,c) -> Server.SecureServer host port k c chain (run . WithSocket userConfig)

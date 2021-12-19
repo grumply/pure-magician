@@ -3,6 +3,7 @@ module Pure.Magician.Server.Static where
 import Pure.Magician.Resources
 import Pure.Magician.Server.Serve
 
+import Pure.Data.View (Pure)
 import Pure.Conjurer
 import Pure.Elm.Component (Component)
 import Pure.WebSocket (WebSocket)
@@ -24,7 +25,7 @@ instance StaticMany a '[] where
 class Staticable (a :: *) (resource :: *) (static :: Bool) where
   static :: WebSocket -> IO ()
 
-instance {-# OVERLAPPABLE #-} (Conjurable resource, Routable resource, Component (Product resource)) => Staticable a resource True where
+instance {-# OVERLAPPABLE #-} (Conjurable resource, Routable resource, Pure (Product resource)) => Staticable a resource True where
   static = generateStatic @resource
 
 instance Staticable a resource False where

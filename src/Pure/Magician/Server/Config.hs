@@ -13,7 +13,7 @@ data Config = Config
   , admin    :: Username
   , password :: Password
   , email    :: Email
-  , refresh  :: Int -- minutes
+  , refresh  :: Int -- milliseconds
   , key      :: Maybe String
   , cert     :: Maybe String
   , chain    :: Maybe String

@@ -1,6 +1,15 @@
-module Pure.Magician.Client (module Pure.Magician.Client, Config(..), module Export) where
+{-# language ImplicitParams #-}
+module Pure.Magician.Client 
+  ( client
+  , useSocket
+  , getAdmins, withAdmin, asAdmin, isAdmin
+  , Layout(..)
+  , Client(..)
+  , Routable(..)
+  , Route(..)
+  , module Export
+  ) where
 
-import Pure.Magician.Client.Config
 import Pure.Magician.Client.Restore as Export
 import Pure.Magician.Resources as Export
 
@@ -9,85 +18,116 @@ import Pure.Conjurer as C hiding (Route,Routable)
 import qualified Pure.Conjurer as C
 import Pure.Convoker
 import Pure.Data.JSON (ToJSON,FromJSON)
-import Pure.Elm.Application
+import Pure.Elm.Application as A hiding (layout)
 import Pure.Hooks (provide,useContext)
-import Pure.Router (dispatch,path)
+import Pure.Router (dispatch,path,map)
 import qualified Pure.Router as R
 import Pure.WebSocket
 import qualified Pure.WebSocket.Cache as WS
 import Pure.Maybe
 
+import Control.Applicative
 import Control.Concurrent
 import Control.Monad
 import Data.Bool
 import Data.Typeable
 import System.IO
 
+import Prelude hiding (map)
+
 newtype Socket a = Socket WebSocket
 
 useSocket :: forall a. Typeable (a :: *) => (WebSocket -> View) -> View
 useSocket f = useContext (\((Socket ws) :: Pure.Magician.Client.Socket a) -> f ws)
 
-client :: forall a domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Theme (App a)) => Config a -> IO ()
-client cfg@Config {..} = do
+client :: forall a domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Application a, Layout a) => String -> Int -> a -> IO ()
+client host port a = do
   ws <- clientWS host port
   provide (Socket @a ws)
   hSetBuffering stdout LineBuffering
   -- TODO: make pure-websocket-cache amenable to role domains
   inject body (WS.cache ws)
-  inject body (execute (App ws cfg :: App a))
+  inject body (execute (App ws a))
 
-data App a = App WebSocket (Config a)
+data App a = App WebSocket a
 
-instance {-# INCOHERENT #-} Typeable a => Theme (App a)
+class Layout a where
+  layout :: Route (App a) -> View -> View
+  layout _ = id
 
-instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Theme (App a)) => Application (App a) where
-  data Msg (App a) = Startup
+instance {-# INCOHERENT #-} Layout a
 
-  initialize (App socket Config {..}) = forkIO (void (authenticate @a socket)) >> pure undefined
+instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Application a, Layout a) => Application (App a) where
+  data Model (App a) = AppModel (Model a)
 
-  startup = [Startup]
-
-  upon Startup _ (App socket Config {..}) mdl = onStartup socket >> pure mdl
+  data Msg (App a) 
+    = Startup
+    | AppMsg (Msg a)
 
   data Route (App a) 
-    = NoneR
-    | LoginR
-    | ClientR (SomeRoute a)  
-    
-  route _ _ _ mdl = restore >> pure mdl
+    = ClientR (SomeRoute a)  
+    | AppR (Route a)
 
-  home = NoneR
+  initialize (App socket a) = do
+    forkIO (void (authenticate @a socket))
+    mdl <- initialize a
+    pure (AppModel mdl)
+
+  startup = [Startup] ++ fmap AppMsg startup
+  
+  receive = fmap AppMsg receive
+
+  shutdown = fmap AppMsg shutdown 
+
+  title (AppR r) = title r
+  title _ = Nothing 
 
   location = \case
-    NoneR -> "/"
-    LoginR -> "/login"
     ClientR (SomeRoute r) -> C.location r
+    AppR r -> A.location r
 
-  routes = routeAll @a
+  routes = routeMany @a @(Domains a) <|> map AppR (A.routes @a)
 
-  view rt (App socket Config { fallback, login, layout }) _ =
-    Div <| Themed @(App a) |>
-      [ case rt of
-          NoneR -> fallback
-          LoginR -> login
-          ClientR sr@(SomeRoute rt) -> layout sr (pages @a socket rt)
-      ]
+  upon Startup _ (App socket _) mdl = do
+    subscribeWith AppMsg
+    pure mdl
+  upon (AppMsg msg) (AppR r) (App _ a) (AppModel mdl) =
+    let f = ?command
+    in let ?command = \cmd after -> f (AppMsg cmd) after
+    in AppModel <$> upon msg r a mdl
+  upon (AppMsg msg) _ (App _ a) (AppModel mdl) = 
+    let f = ?command 
+    in let ?command = \cmd after -> f (AppMsg cmd) after
+    in AppModel <$> upon msg home a mdl
+    
+  route (ClientR _) _ _ mdl = restore >> pure mdl
+  route (AppR r) old (App _ a) m@(AppModel mdl) =
+    let f = ?command
+    in let ?command = \cmd after -> f (AppMsg cmd) after
+    in do
+      restore
+      case old of
+        AppR o -> do
+          mdl' <- A.route r o a mdl
+          pure (AppModel mdl')
+        _ -> do
+          mdl' <- A.route r home a mdl
+          pure (AppModel mdl')
 
-instance Typeable a => Default (Config a) where
-  def = Config "127.0.0.1" 8081 def 
-    (useSocket @a $ \socket -> authorize @a (Access socket id defaultOnRegistered) (\(Token (un,_)) -> producing (R.goto "/") (\_ -> Null)))
-    def
-    (\_ v -> v)
+  home = AppR (home @a)
+
+  view rt (App socket a) (AppModel mdl) =
+    layout rt $
+      case rt of
+        ClientR sr@(SomeRoute rt) -> pages @a socket rt
+        AppR r -> 
+          let f = ?command
+          in let ?command = \cmd after -> f (AppMsg cmd) after
+          in view r a mdl
 
 class Client (a :: *) where
   type Domains a :: [*]
   type Domains a = Resources a
-
-routeAll :: forall a x. (Client a, RouteMany a (Domains a)) => Routing (Route (App a)) x
-routeAll = do
-  path "/login" (dispatch LoginR)
-  routeMany @a @(Domains a)
 
 class RouteMany (a :: *) (as :: [*]) where
   routeMany :: Routing (Route (App a)) x
@@ -96,7 +136,7 @@ instance (Routable a x, RouteMany a xs) => RouteMany a (x : xs) where
   routeMany = Pure.Magician.Client.route @a @x >> routeMany @a @xs
 
 instance RouteMany a '[] where
-  routeMany = dispatch NoneR
+  routeMany = continue
 
 class Routable a resource where
   route :: Routing (Route (App a)) ()
@@ -109,8 +149,8 @@ instance {-# OVERLAPPABLE #-}
   , Theme resource
   , C.Routable resource
   , FromJSON (Resource resource), ToJSON (Resource resource), Default (Resource resource)
-  , FromJSON (Context resource), ToJSON (Context resource), Pathable (Context resource), Eq (Context resource)
-  , FromJSON (Name resource), ToJSON (Name resource), Pathable (Name resource), Eq (Name resource)
+  , FromJSON (Context resource), ToJSON (Context resource), Pathable (Context resource), Ord (Context resource)
+  , FromJSON (Name resource), ToJSON (Name resource), Pathable (Name resource), Ord (Name resource)
   , FromJSON (Preview resource)
   , FromJSON (Product resource)
   , Formable (Resource resource)
