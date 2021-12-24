@@ -23,7 +23,7 @@ instance (Listenable a x (Elem x (Discussions a)), ListenMany a xs) => ListenMan
 instance Typeable a => ListenMany a '[] where
   listenMany = do
     authDB @a 
-    conjure @Admins 
+    conjure @(Admins a)
     sorcerer @GlobalAnalyticsMsg @'[GlobalAnalytics] 
     sorcerer @SessionMsg @'[Session]
     sorcerer @SessionsMsg @'[Sessions]
@@ -36,7 +36,7 @@ instance {-# OVERLAPPABLE #-} (Conjurable resource) => Listenable a resource Fal
   listen = conjure @resource
 
 -- Default listeners for resource with discussion, not analyzed.
-instance {-# OVERLAPPABLE #-} (Conjurable resource, Convokable resource) => Listenable a resource True where
+instance {-# OVERLAPPABLE #-} (Typeable a, Conjurable resource, Convokable a resource) => Listenable a resource True where
   listen = do
     conjure @resource 
-    convoke @resource 
+    convoke @a @resource 

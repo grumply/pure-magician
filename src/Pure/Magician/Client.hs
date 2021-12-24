@@ -7,6 +7,7 @@ module Pure.Magician.Client
   , Client(..)
   , Routable(..)
   , Route(..)
+  , App
   , module Export
   ) where
 
@@ -17,10 +18,11 @@ import Pure.Auth (Access(..),Token(..),authenticate,withToken,authorize,defaultO
 import Pure.Conjurer as C hiding (Route,Routable)
 import qualified Pure.Conjurer as C
 import Pure.Convoker
-import Pure.Data.JSON (ToJSON,FromJSON)
+import Pure.Data.JSON (ToJSON,FromJSON,traceJSON)
+import Pure.Elm.Component (run,Component)
 import Pure.Elm.Application as A hiding (layout)
 import Pure.Hooks (provide,useContext)
-import Pure.Router (dispatch,path,map)
+import Pure.Router (dispatch,path,map,catchError,getRoutingState,putRoutingState,runRouting)
 import qualified Pure.Router as R
 import Pure.WebSocket
 import qualified Pure.WebSocket.Cache as WS
@@ -46,7 +48,7 @@ client host port a = do
   provide (Socket @a ws)
   hSetBuffering stdout LineBuffering
   -- TODO: make pure-websocket-cache amenable to role domains
-  inject body (WS.cache ws)
+  inject body (run (WS.Cache @a ws))
   inject body (execute (App ws a))
 
 data App a = App WebSocket a
@@ -86,7 +88,7 @@ instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Applic
     ClientR (SomeRoute r) -> C.location r
     AppR r -> A.location r
 
-  routes = routeMany @a @(Domains a) <|> map AppR (A.routes @a)
+  routes = routeMany @a @(Domains a) <|> map AppR (A.routes @a) 
 
   upon Startup _ (App socket _) mdl = do
     subscribeWith AppMsg
@@ -158,13 +160,26 @@ instance {-# OVERLAPPABLE #-}
   , Updatable a resource
   , Listable resource
   , Creatable a resource
+  , Ownable resource
   ) => Routable a resource 
     where
       route = C.routes @resource (ClientR . SomeRoute)
 
-getAdmins :: IO (Product Admins)
+instance RouteMany a (Domains a) => Pathable (SomeRoute a) where
+  toPath (SomeRoute r) = toPath r
+  fromPath = do
+    st <- getRoutingState
+    (r,st') <- runRouting (routeMany @a @(Domains a)) st
+    case r of
+      Prelude.Left (Just (ClientR sr)) -> do
+        putRoutingState st'
+        pure (Just sr)
+      _ -> do
+        pure Nothing
+
+getAdmins :: forall (a :: *). Typeable a => IO (Product (Admins a))
 getAdmins =
-  WS.req WS.Cached (readingAPI @Admins) (readProduct @Admins) (AdminsContext,AdminsName) >>= \case
+  WS.req @a WS.Cached (readingAPI @(Admins a)) (readProduct @(Admins a)) (AdminsContext,AdminsName) >>= \case
     Nothing -> pure (Admins [])
     Just as -> pure as
 
@@ -174,7 +189,7 @@ withAdmin notAdmin admin =
     Just (Token (un,_)) -> 
       let 
         producer = do
-          Admins as <- getAdmins 
+          Admins as <- getAdmins @a
           pure (un `elem` as)
       in
         producing producer (consuming (bool notAdmin admin))

@@ -51,9 +51,9 @@ serve userConfig = do
   hSetBuffering stdout NoBuffering 
   listenAll @a
   tryCreateUser @a admin email password 
-  tryReadProduct fullPermissions def AdminsContext AdminsName >>= \case
+  tryReadProduct fullPermissions def (AdminsContext :: Context (Admins a)) AdminsName >>= \case
     Just (Admins _) -> pure ()
-    Nothing -> void (tryCreateAdmins [admin])
+    Nothing -> void (tryCreateAdmins @a [admin])
   cacheAll @a
   analyze @a (Milliseconds refresh 0)
   inject body do

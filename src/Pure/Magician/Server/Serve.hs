@@ -75,9 +75,9 @@ serveAll = serveMany @a @(Resources a)
 class ServeMany (a :: *) (xs :: [*]) where
   serveMany :: WebSocket -> SessionId -> Maybe Username -> IO ()
 
-instance ServeMany a '[] where
+instance Typeable a => ServeMany a '[] where
   serveMany socket sid mu = void do
-    defaultServe @Admins socket sid mu 
+    defaultServe @a @(Admins a) socket sid mu 
 
 instance (Server a, Servable a x (Elem x (Discussions a)) (Elem x (Analyze a)), ServeMany a xs) => ServeMany a (x : xs) where 
   serveMany ws sid mun = serve @a @x @(Elem x (Discussions a)) @(Elem x (Analyze a)) ws sid mun >> serveMany @a @xs ws sid mun
@@ -85,26 +85,27 @@ instance (Server a, Servable a x (Elem x (Discussions a)) (Elem x (Analyze a)), 
 class Servable (a :: *) (resource :: *) (discuss :: Bool) (analyze :: Bool) where
   serve :: WebSocket -> SessionId -> Maybe Username -> IO ()
 
-type family ServeConstraints a (discussion :: Bool) :: Constraint where
-  ServeConstraints resource True = 
-    ( ServeConstraints resource False
-    , DefaultPermissions (Comment resource), DefaultPermissions (Meta resource)
-    , DefaultCallbacks (Comment resource), DefaultCallbacks (Meta resource)
-    , DefaultInteractions (Comment resource), DefaultInteractions (Meta resource)
-    , DefaultCallbacks (Discussion resource), DefaultCallbacks (Mods resource), DefaultCallbacks (UserVotes resource)
-    , Conjurable (Meta resource) 
-    , Conjurable (Comment resource) 
-    , Default (Resource (Meta resource))
-    , Previewable (Meta resource)
-    , Producible (Meta resource)
-    , Producible (Comment resource)
-    , Processable (Meta resource)
-    , Processable (Comment resource)
-    , Amendable (Meta resource)
-    , Amendable (Comment resource)
+type family ServeConstraints a resource (discussion :: Bool) :: Constraint where
+  ServeConstraints a resource True = 
+    ( ServeConstraints a resource False
+    , DefaultPermissions (Comment a resource), DefaultPermissions (Meta a resource)
+    , DefaultCallbacks (Comment a resource), DefaultCallbacks (Meta a resource)
+    , DefaultInteractions (Comment a resource), DefaultInteractions (Meta a resource)
+    , DefaultCallbacks (Discussion a resource), DefaultCallbacks (Mods a resource), DefaultCallbacks (UserVotes a resource)
+    , Conjurable (Meta a resource) 
+    , Conjurable (Comment a resource) 
+    , Default (Resource (Meta a resource))
+    , Previewable (Meta a resource)
+    , Producible (Meta a resource)
+    , Producible (Comment a resource)
+    , Processable (Meta a resource)
+    , Processable (Comment a resource)
+    , Amendable (Meta a resource)
+    , Amendable (Comment a resource)
     )
-  ServeConstraints resource False = 
-    ( Typeable resource
+  ServeConstraints a resource False = 
+    ( Typeable a
+    , Typeable resource
     , DefaultPermissions resource
     , DefaultCallbacks resource
     , DefaultInteractions resource
@@ -116,29 +117,29 @@ type family ServeConstraints a (discussion :: Bool) :: Constraint where
     )
 
 -- Default instance for a uncached resource with discussion with analyze.
-instance ( ServeConstraints resource True ) => Servable a resource True True where
-  serve = defaultServeWithDiscussionWithAnalyze @resource
+instance ( ServeConstraints a resource True ) => Servable a resource True True where
+  serve = defaultServeWithDiscussionWithAnalyze @a @resource
 
 -- Default instance for a uncached resource with discussion without analyze.
-instance ( ServeConstraints resource True ) => Servable a resource True False where
-  serve = defaultServeWithDiscussion @resource
+instance ( ServeConstraints a resource True ) => Servable a resource True False where
+  serve = defaultServeWithDiscussion @a @resource
 
 -- Default instance for a uncached resource without discussion with analyze.
-instance ( ServeConstraints resource False ) => Servable a resource False True where
-  serve = defaultServeWithAnalyze @resource
+instance ( ServeConstraints a resource False ) => Servable a resource False True where
+  serve = defaultServeWithAnalyze @a @resource
 
 -- Default instance for a uncached resource without discussion without analyze.
-instance ( ServeConstraints resource False ) => Servable a resource False False where
-  serve = defaultServe @resource
+instance ( ServeConstraints a resource False ) => Servable a resource False False where
+  serve = defaultServe @a @resource
 
-defaultServeWithDiscussionWithAnalyze :: forall x.  ( ServeConstraints x True ) => WebSocket -> SessionId -> Maybe Username -> IO ()
+defaultServeWithDiscussionWithAnalyze :: forall a x.  ( ServeConstraints a x True ) => WebSocket -> SessionId -> Maybe Username -> IO ()
 defaultServeWithDiscussionWithAnalyze ws sid = \case
   Just un -> void do
     ip <- fromWebSocket ws
     enact ws (reading @x readPermissions (addAnalytics sid ip (callbacks (Just un))))
-    enact ws (publishing @x (permissions (Just un)) (addAnalytics sid ip (addDiscussionCreationCallbacks [un] (callbacks (Just un)))) (interactions (Just un)))
+    enact ws (publishing @x (permissions (Just un)) (addAnalytics sid ip (addDiscussionCreationCallbacks @a [un] (callbacks (Just un)))) (interactions (Just un)))
     enact ws (analytics @x (permissions (Just un)))
-    Convoker.authenticatedEndpoints @x ws un 
+    Convoker.authenticatedEndpoints @a @x ws un 
       (permissions (Just un))
       (permissions (Just un))
       (callbacks (Just un))
@@ -153,17 +154,17 @@ defaultServeWithDiscussionWithAnalyze ws sid = \case
     ip <- fromWebSocket ws
     enact ws (reading @x readPermissions (addAnalytics sid ip (callbacks Nothing)))
     enact ws (analytics @x (permissions Nothing))
-    Convoker.unauthenticatedEndpoints @x ws
+    Convoker.unauthenticatedEndpoints @a @x ws
       (callbacks Nothing)
       (callbacks Nothing)
       (callbacks Nothing)
 
-defaultServeWithDiscussion :: forall x.  ( ServeConstraints x True ) => WebSocket -> SessionId -> Maybe Username -> IO ()
+defaultServeWithDiscussion :: forall a x.  ( ServeConstraints a x True ) => WebSocket -> SessionId -> Maybe Username -> IO ()
 defaultServeWithDiscussion ws _ = \case
   Just un -> void do
     enact ws (reading @x readPermissions (callbacks (Just un)))
-    enact ws (publishing @x (permissions (Just un)) (addDiscussionCreationCallbacks [un] (callbacks (Just un))) (interactions (Just un)))
-    Convoker.authenticatedEndpoints @x ws un 
+    enact ws (publishing @x (permissions (Just un)) (addDiscussionCreationCallbacks @a [un] (callbacks (Just un))) (interactions (Just un)))
+    Convoker.authenticatedEndpoints @a @x ws un 
       (permissions (Just un))
       (permissions (Just un))
       (callbacks (Just un))
@@ -176,13 +177,13 @@ defaultServeWithDiscussion ws _ = \case
 
   _ -> void do
     enact ws (reading @x readPermissions (callbacks Nothing))
-    Convoker.unauthenticatedEndpoints @x ws
+    Convoker.unauthenticatedEndpoints @a @x ws
       (callbacks Nothing)
       (callbacks Nothing)
       (callbacks Nothing)
 
 
-defaultServeWithAnalyze :: forall x.  ( ServeConstraints x False ) => WebSocket -> SessionId -> Maybe Username -> IO ()
+defaultServeWithAnalyze :: forall a x.  ( ServeConstraints a x False ) => WebSocket -> SessionId -> Maybe Username -> IO ()
 defaultServeWithAnalyze ws sid = \case
   Just un -> void do
     ip <- fromWebSocket ws
@@ -195,7 +196,7 @@ defaultServeWithAnalyze ws sid = \case
     enact ws (analytics @x (permissions Nothing))
     enact ws (reading @x readPermissions (addAnalytics sid ip (callbacks Nothing)))
 
-defaultServe :: forall x.  ( ServeConstraints x False ) => WebSocket -> SessionId -> Maybe Username -> IO ()
+defaultServe :: forall a x.  ( ServeConstraints a x False ) => WebSocket -> SessionId -> Maybe Username -> IO ()
 defaultServe ws _ = \case
   Just un -> void do
     enact ws (reading @x readPermissions (callbacks (Just un)))
@@ -209,53 +210,57 @@ defaultServe ws _ = \case
 removeAll :: forall a. (Server a, RemoveMany a (Resources a)) => WebSocket -> IO ()
 removeAll = removeMany @a @(Resources a)
 
-class RemoveMany a (xs :: [*]) where
+class RemoveMany (a :: *) (xs :: [*]) where
   removeMany :: WebSocket -> IO ()
 
-instance (Removable x (Elem x (Discussions a)) (Elem x (Analyze a)), RemoveMany a xs) => RemoveMany a (x : xs) where
-  removeMany ws = remove @x @(Elem x (Discussions a)) @(Elem x (Analyze a)) ws >> removeMany @a @xs ws
+instance (Removable a x (Elem x (Discussions a)) (Elem x (Analyze a)), RemoveMany a xs) => RemoveMany a (x : xs) where
+  removeMany ws = remove @a @x @(Elem x (Discussions a)) @(Elem x (Analyze a)) ws >> removeMany @a @xs ws
 
-instance RemoveMany a '[] where
-  removeMany = defaultRemove @Admins
+instance Typeable a => RemoveMany a '[] where
+  removeMany = defaultRemove @(Admins a)
 
 -- This is required to be able to swap out authenticated and unauthenticated
 -- enpoints when the user's token changes.
-class Removable (resource :: *) (discussion :: Bool) (analyze :: Bool) where
+class Removable (a :: *) (resource :: *) (discussion :: Bool) (analyze :: Bool) where
   remove :: WebSocket -> IO ()
 
 instance 
-  ( Typeable resource
+  ( Typeable a
+  , Typeable resource
   , ToJSON (Context resource), FromJSON (Context resource)
-  ) => Removable resource False False
+  ) => Removable a resource False False
   where
     remove = defaultRemove @resource 
 
 instance 
-  ( Typeable resource
+  ( Typeable a
+  , Typeable resource
   , ToJSON (Context resource), FromJSON (Context resource)
   , ToJSON (Name resource), FromJSON (Name resource)
-  ) => Removable resource True False
+  ) => Removable a resource True False
   where
-    remove = defaultRemoveWithDiscussion @resource
+    remove = defaultRemoveWithDiscussion @a @resource
 
 instance 
-  ( Typeable resource
+  ( Typeable a
+  , Typeable resource
   , ToJSON (Context resource), FromJSON (Context resource)
   , ToJSON (Name resource), FromJSON (Name resource)
-  ) => Removable resource False True
+  ) => Removable a resource False True
   where
     remove ws = do
       defaultRemove @resource ws
       defaultRemoveAnalytics @resource ws
 
 instance 
-  ( Typeable resource
+  ( Typeable a
+  , Typeable resource
   , ToJSON (Context resource), FromJSON (Context resource)
   , ToJSON (Name resource), FromJSON (Name resource)
-  ) => Removable resource True True
+  ) => Removable a resource True True
   where
     remove ws = do
-      defaultRemoveWithDiscussion @resource ws
+      defaultRemoveWithDiscussion @a @resource ws
       defaultRemoveAnalytics @resource ws
 
 defaultRemove :: forall (x :: *).  ( Typeable x, ToJSON (Context x), FromJSON (Context x) ) => WebSocket -> IO ()
@@ -263,19 +268,19 @@ defaultRemove ws = do
   WS.remove ws (readingAPI @x) 
   WS.remove ws (publishingAPI @x)
 
-defaultRemoveWithDiscussion :: forall (x :: *).  ( Typeable x, ToJSON (Context x), FromJSON (Context x), ToJSON (Name x), FromJSON (Name x) ) => WebSocket -> IO ()
+defaultRemoveWithDiscussion :: forall (a :: *) (x :: *).  ( Typeable a, Typeable x, ToJSON (Context x), FromJSON (Context x), ToJSON (Name x), FromJSON (Name x) ) => WebSocket -> IO ()
 defaultRemoveWithDiscussion ws = do
   WS.remove ws (readingAPI @x)
   WS.remove ws (publishingAPI @x)
-  WS.remove ws (readingAPI @(Discussion x))
-  WS.remove ws (readingAPI @(Comment x))
-  WS.remove ws (readingAPI @(Meta x))
-  WS.remove ws (readingAPI @(Mods x))
-  WS.remove ws (readingAPI @(UserVotes x))
-  WS.remove ws (publishingAPI @(Comment x))
-  WS.remove ws (publishingAPI @(Meta x))
-  WS.remove ws (publishingAPI @(Mods x))
-  WS.remove ws (publishingAPI @(UserVotes x))
+  WS.remove ws (readingAPI @(Discussion a x))
+  WS.remove ws (readingAPI @(Comment a x))
+  WS.remove ws (readingAPI @(Meta a x))
+  WS.remove ws (readingAPI @(Mods a x))
+  WS.remove ws (readingAPI @(UserVotes a x))
+  WS.remove ws (publishingAPI @(Comment a x))
+  WS.remove ws (publishingAPI @(Meta a x))
+  WS.remove ws (publishingAPI @(Mods a x))
+  WS.remove ws (publishingAPI @(UserVotes a x))
 
 defaultRemoveAnalytics :: forall (x :: *). (Typeable x) => WebSocket -> IO ()
 defaultRemoveAnalytics ws = do
