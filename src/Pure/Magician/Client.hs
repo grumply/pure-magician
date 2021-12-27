@@ -3,6 +3,7 @@ module Pure.Magician.Client
   ( client
   , useSocket
   , getAdmins, withAdmin, asAdmin, isAdmin
+  , WithRoute, withRoute
   , Layout(..)
   , Client(..)
   , Routable(..)
@@ -32,6 +33,7 @@ import Control.Applicative
 import Control.Concurrent
 import Control.Monad
 import Data.Bool
+import Data.Kind
 import Data.Typeable
 import System.IO
 
@@ -176,6 +178,24 @@ instance RouteMany a (Domains a) => Pathable (SomeRoute a) where
         pure (Just sr)
       _ -> do
         pure Nothing
+
+withRoute :: forall constraint a x. (WithRoute constraint a (Domains a)) => SomeRoute a -> (forall r. constraint r => C.Route r -> x) -> Maybe x
+withRoute = withSomeRoute @constraint @a @(Domains a)
+
+-- This approach should be okay up to a point, but it does incur overhead in testing
+-- the TypeRep for a match against each element of rs. Hopefully the core for this is
+-- reasonable and inlines all of this into a big case statement.
+class WithRoute (constraint :: * -> Constraint) (a :: *) (rs :: [*]) where
+  withSomeRoute :: forall x. SomeRoute a -> (forall r. constraint r => C.Route r -> x) -> Maybe x
+
+instance WithRoute constraint a '[] where
+  withSomeRoute _ _ = Nothing
+
+instance (Typeable r, WithRoute constraint a rs, constraint r) => WithRoute constraint a (r : rs) where
+  withSomeRoute sr@(SomeRoute x) f =
+    case cast x of
+      Just (r :: C.Route r) -> Just (f r)
+      _                     -> withSomeRoute @constraint @a @rs sr f
 
 getAdmins :: forall (a :: *). Typeable a => IO (Product (Admins a))
 getAdmins =

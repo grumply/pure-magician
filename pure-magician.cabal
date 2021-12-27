@@ -90,3 +90,4 @@ library
     ViewPatterns
     BangPatterns
     PolyKinds
+    ConstraintKinds
