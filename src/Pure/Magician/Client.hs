@@ -4,6 +4,7 @@ module Pure.Magician.Client
   , useSocket
   , getAdmins, withAdmin, asAdmin, isAdmin
   , WithRoute, withRoute
+  , unsafeWithRoute
   , Layout(..)
   , Client(..)
   , Routable(..)
@@ -20,6 +21,7 @@ import Pure.Conjurer as C hiding (Route,Routable)
 import qualified Pure.Conjurer as C
 import Pure.Convoker
 import Pure.Data.JSON (ToJSON,FromJSON,traceJSON)
+import qualified Pure.Data.Txt as Txt
 import Pure.Elm.Component (run,Component)
 import Pure.Elm.Application as A hiding (layout)
 import Pure.Hooks (provide,useContext)
@@ -34,8 +36,11 @@ import Control.Concurrent
 import Control.Monad
 import Data.Bool
 import Data.Kind
+import Data.List as List
+import Data.Maybe
 import Data.Typeable
 import System.IO
+import System.IO.Unsafe
 
 import Prelude hiding (map)
 
@@ -90,7 +95,7 @@ instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Applic
     ClientR (SomeRoute r) -> C.location r
     AppR r -> A.location r
 
-  routes = routeMany @a @(Domains a) <|> map AppR (A.routes @a) 
+  routes = routeMany @a @(Domains a) <|> R.map AppR (A.routes @a) 
 
   upon Startup _ (App socket _) mdl = do
     subscribeWith AppMsg
@@ -181,6 +186,16 @@ instance RouteMany a (Domains a) => Pathable (SomeRoute a) where
 
 withRoute :: forall constraint a x. (WithRoute constraint a (Domains a)) => SomeRoute a -> (forall r. constraint r => C.Route r -> x) -> Maybe x
 withRoute = withSomeRoute @constraint @a @(Domains a)
+
+-- Unsafe if you have written a custom effectful `Routable` instance for one of the `Domains` of `a`. The
+-- default derived instances are safe.
+unsafeWithRoute :: forall a constraint x. (RouteMany a (Domains a), WithRoute constraint a (Domains a)) => Txt -> (forall r. constraint r => C.Route r -> x) -> Maybe x
+unsafeWithRoute t f 
+  | Just (ClientR (sr :: SomeRoute a)) <- unsafePerformIO (R.route (routeMany @a @(Domains a)) t)
+  = withRoute @constraint @a sr f
+
+  | otherwise
+  = Nothing
 
 -- This approach should be okay up to a point, but it does incur overhead in testing
 -- the TypeRep for a match against each element of rs. Hopefully the core for this is
