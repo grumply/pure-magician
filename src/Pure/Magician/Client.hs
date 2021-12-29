@@ -155,7 +155,6 @@ instance {-# OVERLAPPABLE #-}
   , Client a
   , Domains a ~ domains
   , Elem resource domains ~ True
-  , Theme resource
   , C.Routable resource
   , FromJSON (Resource resource), ToJSON (Resource resource), Default (Resource resource)
   , FromJSON (Context resource), ToJSON (Context resource), Pathable (Context resource), Ord (Context resource)
