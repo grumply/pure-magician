@@ -1,7 +1,5 @@
 module Pure.Magician.Resources where
 
-import Data.Kind
-
 {-
 Note that this module treats lists as set-like. We rely on type-level lists for
 convenience, so some type families, like `Remove`, don't short-circuit like
@@ -78,10 +76,6 @@ type family (\\) (xs :: [*]) (ys :: [*]) :: [*] where
 type family (++) (xs :: [*]) (ys :: [*]) :: [*] where
   xs ++ '[] = xs
   xs ++ (y : ys) = (Add y xs) ++ ys
-
-type family For (xs :: [*]) (constraint :: * -> Constraint) :: Constraint where
-  For '[] c = ()
-  For (x ': xs) c = (c x, For xs c)
 
 class Materialize (bool :: Bool) where
   materialize :: Bool

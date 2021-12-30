@@ -10,6 +10,7 @@ module Pure.Magician.Client
   , Routable(..)
   , Route(..)
   , App
+  , CRUL
   , module Export
   ) where
 
@@ -49,7 +50,7 @@ newtype Socket a = Socket WebSocket
 useSocket :: forall a. Typeable (a :: *) => (WebSocket -> View) -> View
 useSocket f = useContext (\((Socket ws) :: Pure.Magician.Client.Socket a) -> f ws)
 
-client :: forall a domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Application a, Layout a) => String -> Int -> a -> IO ()
+client :: forall a domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRoute (CRUL a) a domains, Application a, Layout a) => String -> Int -> a -> IO ()
 client host port a = do
   ws <- clientWS host port
   provide (Socket @a ws)
@@ -66,7 +67,7 @@ class Layout a where
 
 instance {-# INCOHERENT #-} Layout a
 
-instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Application a, Layout a) => Application (App a) where
+instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRoute (CRUL a) a domains, Application a, Layout a) => Application (App a) where
   data Model (App a) = AppModel (Model a)
 
   data Msg (App a) 
@@ -128,11 +129,21 @@ instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, Applic
   view rt (App socket a) (AppModel mdl) =
     layout rt $
       case rt of
-        ClientR sr@(SomeRoute rt) -> pages @a socket rt
+        ClientR sr -> 
+          case withRoute @(CRUL a) sr (toPage @a) of
+            Just v -> v
+            _      -> Null
+
         AppR r -> 
           let f = ?command
           in let ?command = \cmd after -> f (AppMsg cmd) after
           in view r a mdl
+
+class (Creatable a r, Readable r, Listable r, Updatable a r) => CRUL a r
+instance (Creatable a r, Readable r, Listable r, Updatable a r) => CRUL a r
+
+toPage :: forall a r. (Typeable a,Creatable a r,Readable r,Listable r,Updatable a r) => C.Route r -> View
+toPage r = useSocket @a $ \ws -> pages @a ws r
 
 class Client (a :: *) where
   type Domains a :: [*]
@@ -156,16 +167,8 @@ instance {-# OVERLAPPABLE #-}
   , Domains a ~ domains
   , Elem resource domains ~ True
   , C.Routable resource
-  , FromJSON (Resource resource), ToJSON (Resource resource), Default (Resource resource)
   , FromJSON (Context resource), ToJSON (Context resource), Pathable (Context resource), Ord (Context resource)
   , FromJSON (Name resource), ToJSON (Name resource), Pathable (Name resource), Ord (Name resource)
-  , FromJSON (Preview resource)
-  , FromJSON (Product resource)
-  , Formable (Resource resource)
-  , Readable resource
-  , Updatable a resource
-  , Listable resource
-  , Creatable a resource
   , Ownable resource
   ) => Routable a resource 
     where
