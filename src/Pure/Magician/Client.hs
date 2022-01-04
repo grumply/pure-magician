@@ -7,43 +7,48 @@ module Pure.Magician.Client
   , unsafeWithRoute
   , Layout(..)
   , Client(..)
-  , Routable(..)
   , Route(..)
   , App
-  , CRUL
   , module Export
   ) where
+
+import Pure.Conjurer as Export hiding (location,routes,Route,Cache,List,publishing,root)
+import Pure.Data.JSON as Export (ToJSON,FromJSON,traceJSON,logJSON)
+import Pure.WebSocket.Cache as Export (req,Policy(..))
+import Data.Typeable as Export
+import System.IO.Unsafe as Export 
+import Control.Concurrent as Export
+import Control.Monad as Export (void,unless,when)
+import Data.Bool as Export (bool)
+import Data.Maybe as Export
+import Pure.Auth as Export (Username(..),Access(..),Token(..),authenticate,withToken,authorize,defaultOnRegistered)
+import Unsafe.Coerce as Export
+import Pure.Router as Export (path,match,dispatch,continue)
 
 import Pure.Magician.Client.Restore as Export
 import Pure.Magician.Resources as Export
 
-import Pure.Auth (Access(..),Token(..),authenticate,withToken,authorize,defaultOnRegistered)
 import Pure.Conjurer as C hiding (Route,Routable)
 import qualified Pure.Conjurer as C
 import Pure.Convoker
-import Pure.Data.JSON (ToJSON,FromJSON,traceJSON)
 import qualified Pure.Data.Txt as Txt
+import qualified Pure.Data.View (Pure(..))
 import Pure.Elm.Component (run,Component)
 import Pure.Elm.Application as A hiding (layout)
 import Pure.Hooks (provide,useContext)
 import Pure.Router (dispatch,path,map,catchError,getRoutingState,putRoutingState,runRouting)
 import qualified Pure.Router as R
 import Pure.WebSocket
-import qualified Pure.WebSocket.Cache as WS
+import Pure.WebSocket.Cache as WS
 import Pure.Maybe
 
 import Control.Applicative
-import Control.Concurrent
-import Control.Monad
-import Data.Bool
 import Data.Kind
 import Data.List as List
-import Data.Maybe
 import Data.Typeable
 import System.IO
-import System.IO.Unsafe
 
-import Prelude hiding (map)
+import Prelude hiding (map,not)
 
 newtype Socket a = Socket WebSocket
 
@@ -62,7 +67,7 @@ client host port a = do
 data App a = App WebSocket a
 
 class Layout a where
-  layout :: Route (App a) -> View -> View
+  layout :: A.Route (App a) -> View -> View
   layout _ = id
 
 instance {-# INCOHERENT #-} Layout a
@@ -76,7 +81,7 @@ instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRo
 
   data Route (App a) 
     = ClientR (SomeRoute a)  
-    | AppR (Route a)
+    | AppR (A.Route a)
 
   initialize (App socket a) = do
     forkIO (void (authenticate @a socket))
@@ -150,16 +155,16 @@ class Client (a :: *) where
   type Domains a = Resources a
 
 class RouteMany (a :: *) (as :: [*]) where
-  routeMany :: Routing (Route (App a)) x
+  routeMany :: Routing (A.Route (App a)) x
 
-instance (Routable a x, RouteMany a xs) => RouteMany a (x : xs) where
+instance (Pure.Magician.Client.Routable a x, RouteMany a xs) => RouteMany a (x : xs) where
   routeMany = Pure.Magician.Client.route @a @x >> routeMany @a @xs
 
 instance RouteMany a '[] where
   routeMany = continue
 
 class Routable a resource where
-  route :: Routing (Route (App a)) ()
+  route :: Routing (A.Route (App a)) ()
 
 instance {-# OVERLAPPABLE #-}
   ( Typeable resource
@@ -170,7 +175,7 @@ instance {-# OVERLAPPABLE #-}
   , FromJSON (Context resource), ToJSON (Context resource), Pathable (Context resource), Ord (Context resource)
   , FromJSON (Name resource), ToJSON (Name resource), Pathable (Name resource), Ord (Name resource)
   , Ownable resource
-  ) => Routable a resource 
+  ) => Pure.Magician.Client.Routable a resource 
     where
       route = C.routes @resource (ClientR . SomeRoute)
 
