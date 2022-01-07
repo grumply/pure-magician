@@ -12,25 +12,14 @@ module Pure.Magician.Client
   , module Export
   ) where
 
-import Pure.Conjurer as Export hiding (location,routes,Route,Cache,List,publishing,root)
-import Pure.Data.JSON as Export (ToJSON,FromJSON,traceJSON,logJSON)
-import Pure.WebSocket.Cache as Export (req,Policy(..))
-import Data.Typeable as Export
-import System.IO.Unsafe as Export 
-import Control.Concurrent as Export
-import Control.Monad as Export (void,unless,when)
-import Data.Bool as Export (bool)
-import Data.Maybe as Export
-import Pure.Auth as Export (Username(..),Access(..),Token(..),authenticate,withToken,authorize,defaultOnRegistered)
-import Unsafe.Coerce as Export
-import Pure.Router as Export (path,match,dispatch,continue)
-
 import Pure.Magician.Client.Restore as Export
 import Pure.Magician.Resources as Export
 
+import Pure.Auth (Username(..),Access(..),Token(..),authenticate,withToken,authorize,defaultOnRegistered)
 import Pure.Conjurer as C hiding (Route,Routable)
 import qualified Pure.Conjurer as C
 import Pure.Convoker
+import Pure.Data.JSON (ToJSON,FromJSON,traceJSON,logJSON)
 import qualified Pure.Data.Txt as Txt
 import qualified Pure.Data.View (Pure(..))
 import Pure.Elm.Component (run,Component)
@@ -43,10 +32,13 @@ import Pure.WebSocket.Cache as WS
 import Pure.Maybe
 
 import Control.Applicative
+import Control.Concurrent
+import Data.Bool
 import Data.Kind
 import Data.List as List
 import Data.Typeable
 import System.IO
+import System.IO.Unsafe
 
 import Prelude hiding (map,not)
 
