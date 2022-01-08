@@ -6,6 +6,7 @@ module Pure.Magician.Client
   , WithRoute, withRoute
   , unsafeWithRoute
   , Layout(..)
+  , Restore(..)
   , Client(..)
   , Route(..)
   , App
@@ -47,7 +48,7 @@ newtype Socket a = Socket WebSocket
 useSocket :: forall a. Typeable (a :: *) => (WebSocket -> View) -> View
 useSocket f = useContext (\((Socket ws) :: Pure.Magician.Client.Socket a) -> f ws)
 
-client :: forall a domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRoute (CRUL a) a domains, Application a, Layout a) => String -> Int -> a -> IO ()
+client :: forall a domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRoute (CRUL a) a domains, Application a, Restore a, Layout a) => String -> Int -> a -> IO ()
 client host port a = do
   ws <- clientWS host port
   provide (Socket @a ws)
@@ -64,7 +65,13 @@ class Layout a where
 
 instance {-# INCOHERENT #-} Layout a
 
-instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRoute (CRUL a) a domains, Application a, Layout a) => Application (App a) where
+class Restore a where
+  restore :: IO ()
+  restore = restoreWith (3 * Second) (100 * Millisecond)
+
+instance {-# INCOHERENT #-} Restore a
+
+instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRoute (CRUL a) a domains, Application a, Restore a, Layout a) => Application (App a) where
   data Model (App a) = AppModel (Model a)
 
   data Msg (App a) 
@@ -107,12 +114,14 @@ instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRo
     in let ?command = \cmd after -> f (AppMsg cmd) after
     in AppModel <$> upon msg home a mdl
     
-  route (ClientR _) _ _ mdl = restore >> pure mdl
+  route (ClientR _) _ _ mdl = do
+    restore @a
+    pure mdl
   route (AppR r) old (App _ a) m@(AppModel mdl) =
     let f = ?command
     in let ?command = \cmd after -> f (AppMsg cmd) after
     in do
-      restore
+      restore @a
       case old of
         AppR o -> do
           mdl' <- A.route r o a mdl
