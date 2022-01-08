@@ -41,10 +41,12 @@ restoreWith max d =
                 -- Sadly, there's no way to know if all the 
                 -- desired content has loaded, which is the
                 -- reason for the delay.
-                withScrollPositionFromHistory $ \x y -> do
-                  h <- scrollHeight
-                  w <- scrollWidth
-                  if w >= x && h >= y then do
+                withScrollPositionFromHistory $ \ox oy -> do
+                  ch <- clientHeight
+                  cw <- clientWidth
+                  sh <- scrollHeight
+                  sw <- scrollWidth
+                  if sw >= ox + cw && sh >= oy + ch then do
                     addAnimation restoreScrollPosition
                     release
                   else do
