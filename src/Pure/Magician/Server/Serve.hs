@@ -1,13 +1,14 @@
 module Pure.Magician.Server.Serve where
 
 import Pure.Magician.Resources
+import Pure.Magician.Server.Limit (limiting,Limit,LimitMany)
 
 import Pure.Auth (Username(..))
 import Pure.Conjurer.Analytics
 import Pure.Conjurer as Conjurer
 import Pure.Convoker as Convoker
 import Pure.Convoker.UserVotes
-import Pure.Elm.Component (Default)
+import Pure.Elm.Component (Default,ToTxt(..))
 import Pure.Data.JSON (ToJSON,FromJSON)
 import Pure.WebSocket (WebSocket, enact)
 import qualified Pure.WebSocket as WS (remove)
@@ -54,22 +55,10 @@ NOTE: If a resource is part of the Caches type family, both the resource and its
 
 -}
 
-class Server (a :: *) where
-  type Caches a :: [*]
-  type Caches a = Resources a \\ '[]
-
-  type Statics a :: [*]
-  type Statics a = Resources a \\ '[]
-
-  type Discussions a :: [*]
-  type Discussions a = '[]
-  
-  type Analyze a :: [*]
-  type Analyze a = '[]
 
 --------------------------------------------------------------------------------
 
-serveAll :: forall a. (Server a, ServeMany a (Resources a)) => WebSocket -> SessionId -> Maybe Username -> IO ()
+serveAll :: forall a. (Server a, ServeMany a (Resources a), LimitMany a (Resources a)) => WebSocket -> SessionId -> Maybe Username -> IO ()
 serveAll = serveMany @a @(Resources a)
 
 class ServeMany (a :: *) (xs :: [*]) where
@@ -79,7 +68,7 @@ instance Typeable a => ServeMany a '[] where
   serveMany socket sid mu = void do
     defaultServe @a @(Admins a) socket sid mu 
 
-instance (Server a, Servable a x (Elem x (Discussions a)) (Elem x (Analyze a)), ServeMany a xs) => ServeMany a (x : xs) where 
+instance (Server a, Limit x, Limit (Mods a x), Limit (Discussion a x), Limit (Meta a x), Limit (UserVotes a x), Limit (Comment a x), Servable a x (Elem x (Discussions a)) (Elem x (Analyze a)), LimitMany a xs, ServeMany a xs) => ServeMany a (x : xs) where 
   serveMany ws sid mun = serve @a @x @(Elem x (Discussions a)) @(Elem x (Analyze a)) ws sid mun >> serveMany @a @xs ws sid mun
 
 class Servable (a :: *) (resource :: *) (discuss :: Bool) (analyze :: Bool) where
@@ -102,6 +91,11 @@ type family ServeConstraints a resource (discussion :: Bool) :: Constraint where
     , Processable (Comment a resource)
     , Amendable (Meta a resource)
     , Amendable (Comment a resource)
+    , Limit (Meta a resource)
+    , Limit (Discussion a resource)
+    , Limit (Mods a resource)
+    , Limit (Comment a resource)
+    , Limit (UserVotes a resource)
     )
   ServeConstraints a resource False = 
     ( Typeable a
@@ -114,6 +108,7 @@ type family ServeConstraints a resource (discussion :: Bool) :: Constraint where
     , Producible resource
     , Processable resource
     , Amendable resource
+    , Limit resource
     )
 
 -- Default instance for a uncached resource with discussion with analyze.
@@ -136,74 +131,85 @@ defaultServeWithDiscussionWithAnalyze :: forall a x.  ( ServeConstraints a x Tru
 defaultServeWithDiscussionWithAnalyze ws sid = \case
   Just un -> void do
     ip <- fromWebSocket ws
-    enact ws (reading @x readPermissions (addAnalytics sid ip (callbacks (Just un))))
-    enact ws (publishing @x (permissions (Just un)) (addAnalytics sid ip (addDiscussionCreationCallbacks @a [un] (callbacks (Just un)))) (interactions (Just un)))
-    enact ws (analytics @x (permissions (Just un)))
-    Convoker.authenticatedEndpoints @a @x ws un 
-      (permissions (Just un))
-      (permissions (Just un))
-      (callbacks (Just un))
-      (extendCommentCallbacks fullPermissions (callbacks (Just un)) (callbacks (Just un)))
-      (callbacks (Just un))
-      (callbacks (Just un))
-      (callbacks (Just un))
-      (interactions (Just un))
-      (interactions (Just un))
+    let ipt = toTxt ip
+    enact ws (reading @x (limiting ipt readPermissions) (addAnalytics sid ip (callbacks (Just un))))
+    enact ws (publishing @x (limiting ipt $ permissions (Just un)) (addAnalytics sid ip (addDiscussionCreationCallbacks @a [un] (callbacks (Just un)))) (interactions (Just un)))
+    enact ws (analytics @x (limiting ipt $ permissions (Just un)))
+    
+    enact ws (reading @(Discussion a x) (limiting ipt readPermissions) (callbacks (Just un)))
+    enact ws (reading @(Comment a x) (limiting ipt $ permissions (Just un)) (extendCommentCallbacks (limiting ipt fullPermissions) (callbacks (Just un)) (callbacks (Just un))))
+    enact ws (reading @(Meta a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)))
+    enact ws (reading @(Mods a x) (limiting ipt readPermissions) (callbacks (Just un)))
+    enact ws (reading @(UserVotes a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)))
+
+    enact ws (publishing @(Comment a x) (limiting ipt $ permissions (Just un)) (extendCommentCallbacks (limiting ipt fullPermissions) (callbacks (Just un)) (callbacks (Just un))) (interactions (Just un)))
+    enact ws (publishing @(Meta a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (publishing @(Mods a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (publishing @(UserVotes a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
 
   _ -> void do
     ip <- fromWebSocket ws
-    enact ws (reading @x readPermissions (addAnalytics sid ip (callbacks Nothing)))
-    enact ws (analytics @x (permissions Nothing))
-    Convoker.unauthenticatedEndpoints @a @x ws
-      (callbacks Nothing)
-      (callbacks Nothing)
-      (callbacks Nothing)
+    let ipt = toTxt ip
+    enact ws (reading @x (limiting ipt readPermissions) (addAnalytics sid ip (callbacks Nothing)))
+    enact ws (analytics @x (limiting ipt $ permissions Nothing))
+    enact ws (reading @(Discussion a x) (limiting ipt readPermissions) (callbacks Nothing))
+    enact ws (reading @(Meta a x) (limiting ipt readPermissions) (callbacks Nothing))
+    enact ws (reading @(Mods a x) (limiting ipt readPermissions) (callbacks Nothing))
 
 defaultServeWithDiscussion :: forall a x.  ( ServeConstraints a x True ) => WebSocket -> SessionId -> Maybe Username -> IO ()
 defaultServeWithDiscussion ws _ = \case
   Just un -> void do
-    enact ws (reading @x readPermissions (callbacks (Just un)))
-    enact ws (publishing @x (permissions (Just un)) (addDiscussionCreationCallbacks @a [un] (callbacks (Just un))) (interactions (Just un)))
-    Convoker.authenticatedEndpoints @a @x ws un 
-      (permissions (Just un))
-      (permissions (Just un))
-      (callbacks (Just un))
-      (extendCommentCallbacks fullPermissions (callbacks (Just un)) (callbacks (Just un)))
-      (callbacks (Just un))
-      (callbacks (Just un))
-      (callbacks (Just un))
-      (interactions (Just un))
-      (interactions (Just un))
+    ip <- fromWebSocket ws
+    let ipt = toTxt ip
+    enact ws (reading @x (limiting ipt readPermissions) (callbacks (Just un)))
+    enact ws (publishing @x (limiting ipt $ permissions (Just un)) (addDiscussionCreationCallbacks @a [un] (callbacks (Just un))) (interactions (Just un)))
+
+    enact ws (reading @(Discussion a x) (limiting ipt readPermissions) (callbacks (Just un)))
+    enact ws (reading @(Comment a x) (limiting ipt $ permissions (Just un)) (extendCommentCallbacks (limiting ipt fullPermissions) (callbacks (Just un)) (callbacks (Just un))))
+    enact ws (reading @(Meta a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)))
+    enact ws (reading @(Mods a x) (limiting ipt readPermissions) (callbacks (Just un)))
+    enact ws (reading @(UserVotes a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)))
+
+    enact ws (publishing @(Comment a x) (limiting ipt $ permissions (Just un)) (extendCommentCallbacks (limiting ipt fullPermissions) (callbacks (Just un)) (callbacks (Just un))) (interactions (Just un)))
+    enact ws (publishing @(Meta a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (publishing @(Mods a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    enact ws (publishing @(UserVotes a x) (limiting ipt $ permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
 
   _ -> void do
-    enact ws (reading @x readPermissions (callbacks Nothing))
-    Convoker.unauthenticatedEndpoints @a @x ws
-      (callbacks Nothing)
-      (callbacks Nothing)
-      (callbacks Nothing)
-
+    ip <- fromWebSocket ws
+    let ipt = toTxt ip
+    enact ws (reading @x (limiting ipt readPermissions) (callbacks Nothing))
+    enact ws (reading @(Discussion a x) (limiting ipt readPermissions) (callbacks Nothing))
+    enact ws (reading @(Meta a x) (limiting ipt readPermissions) (callbacks Nothing))
+    enact ws (reading @(Mods a x) (limiting ipt readPermissions) (callbacks Nothing))
 
 defaultServeWithAnalyze :: forall a x.  ( ServeConstraints a x False ) => WebSocket -> SessionId -> Maybe Username -> IO ()
 defaultServeWithAnalyze ws sid = \case
   Just un -> void do
     ip <- fromWebSocket ws
-    enact ws (reading @x readPermissions (addAnalytics sid ip (callbacks (Just un))))
-    enact ws (publishing @x (permissions (Just un)) (addAnalytics sid ip (callbacks (Just un))) (interactions (Just un)))
-    enact ws (analytics @x (permissions (Just un)))
+    let ipt = toTxt ip
+    enact ws (reading @x (limiting ipt readPermissions) (addAnalytics sid ip (callbacks (Just un))))
+    enact ws (publishing @x (limiting ipt $ permissions (Just un)) (addAnalytics sid ip (callbacks (Just un))) (interactions (Just un)))
+    enact ws (analytics @x (limiting ipt $ permissions (Just un)))
 
   _ -> void do
     ip <- fromWebSocket ws
-    enact ws (analytics @x (permissions Nothing))
-    enact ws (reading @x readPermissions (addAnalytics sid ip (callbacks Nothing)))
+    let ipt = toTxt ip
+    enact ws (analytics @x (limiting ipt $ permissions Nothing))
+    enact ws (reading @x (limiting ipt readPermissions) (addAnalytics sid ip (callbacks Nothing)))
 
 defaultServe :: forall a x.  ( ServeConstraints a x False ) => WebSocket -> SessionId -> Maybe Username -> IO ()
 defaultServe ws _ = \case
   Just un -> void do
-    enact ws (reading @x readPermissions (callbacks (Just un)))
-    enact ws (publishing @x (permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
+    ip <- fromWebSocket ws
+    let ipt = toTxt ip
+    enact ws (reading @x (limiting ipt readPermissions) (callbacks (Just un)))
+    enact ws (publishing @x (limiting ipt $ permissions (Just un)) (callbacks (Just un)) (interactions (Just un)))
 
   _ -> void do
-    enact ws (reading @x readPermissions (callbacks Nothing))
+    ip <- fromWebSocket ws
+    let ipt = toTxt ip
+    enact ws (reading @x (limiting ipt readPermissions) (callbacks Nothing))
 
 --------------------------------------------------------------------------------
 

@@ -151,10 +151,6 @@ instance (Creatable a r, Readable r, Listable r, Updatable a r) => CRUL a r
 toPage :: forall a r. (Typeable a,Creatable a r,Readable r,Listable r,Updatable a r) => C.Route r -> View
 toPage r = useSocket @a $ \ws -> pages @a ws r
 
-class Client (a :: *) where
-  type Domains a :: [*]
-  type Domains a = Resources a
-
 class RouteMany (a :: *) (as :: [*]) where
   routeMany :: Routing (A.Route (App a)) x
 

@@ -34,6 +34,23 @@ Frontend:
 
 type family Resources (a :: *) :: [*]
 
+class Server (a :: *) where
+  type Caches a :: [*]
+  type Caches a = Resources a \\ '[]
+
+  type Statics a :: [*]
+  type Statics a = Resources a \\ '[]
+
+  type Discussions a :: [*]
+  type Discussions a = '[]
+  
+  type Analyze a :: [*]
+  type Analyze a = '[]
+
+class Client (a :: *) where
+  type Domains a :: [*]
+  type Domains a = Resources a
+
 type family And (x :: Bool) (y :: Bool) :: Bool where
   And False y = False
   And x False = False

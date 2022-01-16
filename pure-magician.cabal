@@ -20,6 +20,7 @@ library
       base
     , excelsior
     , pure-auth
+    , pure-bloom
     , pure-conjurer
     , pure-convoker
     , pure-core
@@ -28,6 +29,7 @@ library
     , pure-json
     , pure-lifted
     , pure-maybe
+    , pure-random-pcg
     , pure-router
     , pure-sorcerer
     , pure-txt
@@ -52,6 +54,7 @@ library
       Pure.Magician.Server.Cache
       Pure.Magician.Server.Config
       Pure.Magician.Server.Listen
+      Pure.Magician.Server.Limit
       Pure.Magician.Server.Serve
       Pure.Magician.Server.Static
 

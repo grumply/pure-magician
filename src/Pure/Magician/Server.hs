@@ -1,5 +1,5 @@
 {-# language AllowAmbiguousTypes, DeriveAnyClass, DuplicateRecordFields, UndecidableInstances #-}
-module Pure.Magician.Server (module Pure.Magician.Server, Server(..), module Export) where
+module Pure.Magician.Server (module Pure.Magician.Server, Server(..), Limit(..), module Export) where
 
 import Pure.Magician.Resources as Export
 import Pure.Magician.Server.Analytics
@@ -8,6 +8,7 @@ import qualified Pure.Magician.Server.Config as Config
 import Pure.Magician.Server.Listen
 import Pure.Magician.Server.Serve
 import Pure.Magician.Server.Static
+import Pure.Magician.Server.Limit
 
 import Pure.Auth (Config(..),Token(..),Username(..),Password,Email,auth,authDB,tryCreateUser)
 import Pure.Conjurer hiding (Cache,cache)
@@ -44,6 +45,7 @@ serve
     , ServeMany a (Resources a)
     , CacheMany a (Caches a)
     , StaticMany a (Statics a)
+    , LimitMany a (Resources a)
     , Analyzeable (Analyze a)
     ) => UserConfig a -> IO ()
 serve userConfig = do
@@ -65,7 +67,7 @@ serve userConfig = do
   forever (delay Minute)
 
 data WithSocket a = WithSocket (Elm (Msg (WithSocket a)) => WebSocket -> SessionId -> Pure.Auth.Config a) WebSocket
-instance (Typeable a, Server a, Component (Connection a), ServeMany a (Resources a)) => Component (WithSocket a) where
+instance (Typeable a, Server a, Component (Connection a), ServeMany a (Resources a), LimitMany a (Resources a)) => Component (WithSocket a) where
   data Model (WithSocket a) = WithSocketModel (Maybe (Token a)) SessionId
 
   initialize (WithSocket _ socket) = do
@@ -121,7 +123,7 @@ instance (Typeable a, Server a, Component (Connection a), ServeMany a (Resources
   view (WithSocket _ socket) (WithSocketModel token _) | user <- fmap (\(Token (un,_)) -> un) token =
     run @(Connection a) Connection {..}
 
-defaultUserConfig :: forall a. (Elm (Msg (WithSocket a)), Server a, ServeMany a (Resources a), RemoveMany a (Resources a)) => WebSocket -> SessionId -> Pure.Auth.Config a 
+defaultUserConfig :: forall a. (Elm (Msg (WithSocket a)), Server a, ServeMany a (Resources a), LimitMany a (Resources a), RemoveMany a (Resources a)) => WebSocket -> SessionId -> Pure.Auth.Config a 
 defaultUserConfig socket sid = Pure.Auth.Config {..}
   where
     blacklist = []
