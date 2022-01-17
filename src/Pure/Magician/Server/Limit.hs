@@ -3,8 +3,7 @@ module Pure.Magician.Server.Limit where
 import Pure.Bloom.Scalable
 import Pure.Conjurer.Permissions
 import Pure.Convoker
-import Pure.Elm.Component
-import Pure.Random
+import Pure.Elm.Component hiding (allowed)
 
 import Control.Concurrent
 import Control.Monad
@@ -27,21 +26,26 @@ limiter = unsafePerformIO do
 
   pure b_
 
-{-# NOINLINE seed #-}
-seed :: IORef Seed
-seed = unsafePerformIO do
-  newSeed >>= newIORef
-
--- strange probabilistic limiter
-limit :: Time -> Txt -> IO Bool
-limit t@(Milliseconds ms _) action = do
-    let x = Prelude.max 1 (15000 `div` ms)
-    n <- atomicModifyIORef' seed (generate (uniformR 0 (x - 1)))
-    go (action <> toTxt n)
+allowed :: Time -> Txt -> IO Bool
+allowed t@(Milliseconds ms _) action = do
+  b <- readIORef limiter
+  full <- test b (action <> "_" <> toTxt max)
+  if full then
+    -- fail fast
+    pure False
+  else
+    go 1 max b
   where
-    go t = do
-      b <- readIORef limiter
-      update b t
+    max = 15000 `div` ms
+    
+    -- a binary search for the first empty slot
+    go lo hi b
+      | lo == hi = update b (action <> "_" <> toTxt lo)
+      | otherwise = do
+        let mid = (lo + hi) `div` 2
+        test b (action <> "_" <> toTxt mid) >>= \case
+          False -> go lo mid b
+          True  -> go (mid + 1) hi b
 
 class Limit a where
   createLimitPrefix :: Txt
@@ -102,7 +106,7 @@ limiting prefix perms =
     limiting act x = \case
       Nothing -> x
       Just t -> do
-        b <- limit t (prefix <> "_" <> act <> "_" <> ty)
+        b <- allowed t (prefix <> "_" <> act <> "_" <> ty)
         if b then x else pure False
   in
     Permissions 
