@@ -1,4 +1,4 @@
-module Pure.Magician.Server.Limit where
+module Pure.Magician.Server.Limit (setPeriod,allowed,Limit(..),limiting,LimitMany) where
 
 import Pure.Bloom.Scalable
 import Pure.Conjurer.Permissions
@@ -11,6 +11,15 @@ import Data.IORef
 import Data.Typeable
 import System.IO.Unsafe
 
+-- maximum delay between similar actions
+{-# NOINLINE period #-}
+period :: IORef Time
+period = unsafePerformIO do
+  newIORef (Seconds 15 0)
+
+setPeriod :: Time -> IO ()
+setPeriod = writeIORef period
+
 {-# NOINLINE limiter #-}
 limiter :: IORef Bloom
 limiter = unsafePerformIO do
@@ -18,8 +27,8 @@ limiter = unsafePerformIO do
   b_ <- new >>= newIORef
   forkIO do
     forever do
-      -- maximum delay between similar actions
-      delay (Seconds 15 0)
+      t <- readIORef period
+      delay t
 
       b <- new
       atomicModifyIORef' b_ $ \_ -> (b,())
@@ -28,6 +37,8 @@ limiter = unsafePerformIO do
 
 allowed :: Time -> Txt -> IO Bool
 allowed t@(Milliseconds ms _) action = do
+  Milliseconds x _ <- readIORef period
+  let max = x `div` ms
   b <- readIORef limiter
   full <- test b (action <> "_" <> toTxt max)
   if full then
@@ -36,8 +47,6 @@ allowed t@(Milliseconds ms _) action = do
   else
     go 1 max b
   where
-    max = 15000 `div` ms
-    
     -- a binary search for the first empty slot
     go lo hi b
       | lo == hi = update b (action <> "_" <> toTxt lo)
