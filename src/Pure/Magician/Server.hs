@@ -93,7 +93,7 @@ instance (Typeable a, Server a, Component (Connection a), ServeMany a (Resources
 
       Startup -> do
         serveAll @a socket sid Nothing
-        enact socket (auth (cfg socket sid))
+        enact socket (auth socket (cfg socket sid))
         pure (WithSocketModel userToken sid)
 
       GetUserToken with -> do
