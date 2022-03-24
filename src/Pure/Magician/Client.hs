@@ -23,6 +23,7 @@ import Pure.Convoker
 import Pure.Data.JSON (ToJSON,FromJSON,traceJSON,logJSON)
 import qualified Pure.Data.Txt as Txt
 import qualified Pure.Data.View (Pure(..))
+import qualified Pure.Elm
 import Pure.Elm.Component (run,Component)
 import Pure.Elm.Application as A hiding (layout)
 import Pure.Hooks (provide,useContext)
@@ -103,32 +104,25 @@ instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRo
   routes = routeMany @a @(Domains a) <|> R.map AppR (A.routes @a) 
 
   upon Startup _ (App socket _) mdl = do
-    subscribeWith AppMsg
+    subscribeWith (AppMsg @a)
     pure mdl
   upon (AppMsg msg) (AppR r) (App _ a) (AppModel mdl) =
-    let f = ?command
-    in let ?command = \cmd after -> f (AppMsg cmd) after
-    in AppModel <$> upon msg r a mdl
+    AppModel <$> Pure.Elm.map (AppMsg @a) (upon msg r a mdl)
   upon (AppMsg msg) _ (App _ a) (AppModel mdl) = 
-    let f = ?command 
-    in let ?command = \cmd after -> f (AppMsg cmd) after
-    in AppModel <$> upon msg home a mdl
+    AppModel <$> Pure.Elm.map (AppMsg @a) (upon msg home a mdl)
     
   route (ClientR _) _ _ mdl = do
     restore @a
     pure mdl
-  route (AppR r) old (App _ a) m@(AppModel mdl) =
-    let f = ?command
-    in let ?command = \cmd after -> f (AppMsg cmd) after
-    in do
-      restore @a
-      case old of
-        AppR o -> do
-          mdl' <- A.route r o a mdl
-          pure (AppModel mdl')
-        _ -> do
-          mdl' <- A.route r home a mdl
-          pure (AppModel mdl')
+  route (AppR r) old (App _ a) m@(AppModel mdl) = do
+    restore @a
+    case old of
+      AppR o -> do
+        mdl' <- Pure.Elm.map (AppMsg @a) (A.route r o a mdl)
+        pure (AppModel mdl')
+      _ -> do
+        mdl' <- Pure.Elm.map (AppMsg @a) (A.route r home a mdl)
+        pure (AppModel mdl')
 
   home = AppR (home @a)
 
@@ -141,9 +135,7 @@ instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRo
             _      -> Null
 
         AppR r -> 
-          let f = ?command
-          in let ?command = \cmd after -> f (AppMsg cmd) after
-          in view r a mdl
+          Pure.Elm.map (AppMsg @a) (view r a mdl)
 
 class (Creatable a r, Readable r, Listable r, Updatable a r) => CRUL a r
 instance (Creatable a r, Readable r, Listable r, Updatable a r) => CRUL a r
