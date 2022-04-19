@@ -3,8 +3,11 @@ module Pure.Magician.Client
   ( client
   , useSocket
   , getAdmins, withAdmin, asAdmin, isAdmin
-  , WithRoute, withRoute
+  , withRoute
   , unsafeWithRoute
+  , getSomeRoute
+  , RouteMany
+  , WithRoute
   , Layout(..)
   , Restore(..)
   , Client(..)
@@ -21,6 +24,7 @@ import Pure.Conjurer as C hiding (Route,Routable)
 import qualified Pure.Conjurer as C
 import Pure.Convoker
 import Pure.Data.JSON (ToJSON,FromJSON,traceJSON,logJSON)
+import Pure.Data.Lifted (getPathname,getSearch)
 import qualified Pure.Data.Txt as Txt
 import qualified Pure.Data.View (Pure(..))
 import qualified Pure.Elm
@@ -44,12 +48,15 @@ import System.IO.Unsafe
 
 import Prelude hiding (map,not)
 
+type RouteMany a = RouteMany' a (Domains a)
+type WithRoute f a = WithRoute' f a (Domains a)
+
 newtype Socket a = Socket WebSocket
 
 useSocket :: forall a. Typeable (a :: *) => (WebSocket -> View) -> View
 useSocket f = useContext (\((Socket ws) :: Pure.Magician.Client.Socket a) -> f ws)
 
-client :: forall a domains. (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRoute (CRUL a) a domains, Application a, Restore a, Layout a) => String -> Int -> a -> IO ()
+client :: forall a domains. (Typeable a, Client a, RouteMany a, WithRoute (CRUL a) a, Application a, Restore a, Layout a) => String -> Int -> a -> IO ()
 client host port a = do
   ws <- clientWS host port
   provide (Socket @a ws)
@@ -72,7 +79,7 @@ class Restore a where
 
 instance {-# INCOHERENT #-} Restore a
 
-instance (Typeable a, Client a, Domains a ~ domains, RouteMany a domains, WithRoute (CRUL a) a domains, Application a, Restore a, Layout a) => Application (App a) where
+instance (Typeable a, Client a, RouteMany a, WithRoute (CRUL a) a, Application a, Restore a, Layout a) => Application (App a) where
   data Model (App a) = AppModel (Model a)
 
   data Msg (App a) 
@@ -143,13 +150,13 @@ instance (Creatable a r, Readable r, Listable r, Updatable a r) => CRUL a r
 toPage :: forall a r. (Typeable a,Creatable a r,Readable r,Listable r,Updatable a r) => C.Route r -> View
 toPage r = useSocket @a $ \ws -> pages @a ws r
 
-class RouteMany (a :: *) (as :: [*]) where
+class RouteMany' (a :: *) (as :: [*]) where
   routeMany :: Routing (A.Route (App a)) x
 
-instance (Pure.Magician.Client.Routable a x, RouteMany a xs) => RouteMany a (x : xs) where
+instance (Pure.Magician.Client.Routable a x, RouteMany' a xs) => RouteMany' a (x : xs) where
   routeMany = Pure.Magician.Client.route @a @x >> routeMany @a @xs
 
-instance RouteMany a '[] where
+instance RouteMany' a '[] where
   routeMany = continue
 
 class Routable a resource where
@@ -168,7 +175,7 @@ instance {-# OVERLAPPABLE #-}
     where
       route = C.routes @resource (ClientR . SomeRoute)
 
-instance RouteMany a (Domains a) => Pathable (SomeRoute a) where
+instance RouteMany a => Pathable (SomeRoute a) where
   toPath (SomeRoute r) = toPath r
   fromPath = do
     st <- getRoutingState
@@ -180,12 +187,12 @@ instance RouteMany a (Domains a) => Pathable (SomeRoute a) where
       _ -> do
         pure Nothing
 
-withRoute :: forall constraint a x. (WithRoute constraint a (Domains a)) => SomeRoute a -> (forall r. constraint r => C.Route r -> x) -> Maybe x
+withRoute :: forall constraint a x. (WithRoute' constraint a (Domains a)) => SomeRoute a -> (forall r. constraint r => C.Route r -> x) -> Maybe x
 withRoute = withSomeRoute @constraint @a @(Domains a)
 
 -- Unsafe if you have written a custom effectful `Routable` instance for one of the `Domains` of `a`. The
 -- default derived instances are safe.
-unsafeWithRoute :: forall a constraint x. (RouteMany a (Domains a), WithRoute constraint a (Domains a)) => Txt -> (forall r. constraint r => C.Route r -> x) -> Maybe x
+unsafeWithRoute :: forall a constraint x. (RouteMany a, WithRoute constraint a) => Txt -> (forall r. constraint r => C.Route r -> x) -> Maybe x
 unsafeWithRoute t f 
   | Just (ClientR (sr :: SomeRoute a)) <- unsafePerformIO (R.route (routeMany @a @(Domains a)) t)
   = withRoute @constraint @a sr f
@@ -193,16 +200,25 @@ unsafeWithRoute t f
   | otherwise
   = Nothing
 
+getSomeRoute :: forall domain. RouteMany domain => IO (Maybe (SomeRoute domain))
+getSomeRoute = do
+  pn <- getPathname 
+  s  <- getSearch
+  r <- R.route (routeMany @domain @(Domains domain)) (pn <> s)
+  case r of
+    Just (ClientR sr) -> pure (Just sr)
+    _ -> pure Nothing
+
 -- This approach should be okay up to a point, but it does incur overhead in testing
 -- the TypeRep for a match against each element of rs. Hopefully the core for this is
 -- reasonable and inlines all of this into a big case statement.
-class WithRoute (constraint :: * -> Constraint) (a :: *) (rs :: [*]) where
+class WithRoute' (constraint :: * -> Constraint) (a :: *) (rs :: [*]) where
   withSomeRoute :: forall x. SomeRoute a -> (forall r. constraint r => C.Route r -> x) -> Maybe x
 
-instance WithRoute constraint a '[] where
+instance WithRoute' constraint a '[] where
   withSomeRoute _ _ = Nothing
 
-instance (Typeable r, WithRoute constraint a rs, constraint r) => WithRoute constraint a (r : rs) where
+instance (Typeable r, WithRoute' constraint a rs, constraint r) => WithRoute' constraint a (r : rs) where
   withSomeRoute sr@(SomeRoute x) f =
     case cast x of
       Just (r :: C.Route r) -> Just (f r)
@@ -229,3 +245,4 @@ withAdmin notAdmin admin =
 
 asAdmin :: forall (a :: *). Typeable a => View -> View
 asAdmin = withAdmin @a Null
+
