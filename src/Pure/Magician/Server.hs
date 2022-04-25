@@ -10,8 +10,8 @@ import Pure.Magician.Server.Serve
 import Pure.Magician.Server.Static
 import Pure.Magician.Server.Limit
 
-import Pure.Auth (Config(..),Token(..),Username(..),Password,Email,auth,authDB,tryCreateUser)
-import Pure.Conjurer hiding (Cache,cache)
+import Pure.Auth as Export (Config(..),Token(..),Username(..),Password,Email,auth,authDB,tryCreateUser) 
+import Pure.Conjurer as Export hiding (Cache,cache)
 import Pure.Conjurer.Analytics
 import qualified Pure.Conjurer as Conjurer
 import Pure.Convoker as Convoker
@@ -22,7 +22,6 @@ import qualified Pure.Server as Server
 import Pure.WebSocket ( WebSocket, enact, repeal, clientWS, activate )
 import qualified Pure.WebSocket as WS
 
-
 import Control.Monad ( liftM2, forever, void )
 import Data.Char
 import Data.Foldable (for_)
@@ -31,7 +30,7 @@ import Data.Typeable ( Typeable, Proxy(..) )
 import GHC.Generics hiding (Meta)
 import System.IO
 
-type UserConfig a = Elm (Msg (WithSocket a)) => WebSocket -> SessionId -> Pure.Auth.Config a 
+type UserConfig a = Elm (Msg (WithSocket a)) => WebSocket -> SessionId -> Export.Config a 
 
 serve
   :: forall a resources cache static. 
@@ -66,7 +65,7 @@ serve userConfig = do
   staticAll @a ws
   forever (delay Minute)
 
-data WithSocket a = WithSocket (Elm (Msg (WithSocket a)) => WebSocket -> SessionId -> Pure.Auth.Config a) WebSocket
+data WithSocket a = WithSocket (Elm (Msg (WithSocket a)) => WebSocket -> SessionId -> Config a) WebSocket
 instance (Typeable a, Server a, Component (Connection a), ServeMany a (Resources a), LimitMany a (Resources a)) => Component (WithSocket a) where
   data Model (WithSocket a) = WithSocketModel (Maybe (Token a)) SessionId
 
@@ -123,8 +122,8 @@ instance (Typeable a, Server a, Component (Connection a), ServeMany a (Resources
   view (WithSocket _ socket) (WithSocketModel token _) | user <- fmap (\(Token (un,_)) -> un) token =
     run @(Connection a) Connection {..}
 
-defaultUserConfig :: forall a. (Elm (Msg (WithSocket a)), Server a, ServeMany a (Resources a), LimitMany a (Resources a), RemoveMany a (Resources a)) => WebSocket -> SessionId -> Pure.Auth.Config a 
-defaultUserConfig socket sid = Pure.Auth.Config {..}
+defaultUserConfig :: forall a. (Elm (Msg (WithSocket a)), Server a, ServeMany a (Resources a), LimitMany a (Resources a), RemoveMany a (Resources a)) => WebSocket -> SessionId -> Config a 
+defaultUserConfig socket sid = Config {..}
   where
     blacklist = []
     implicitlyWhitelisted = Prelude.not . (`elem` blacklist)

@@ -19,6 +19,7 @@ library
   build-depends:
       base
     , excelsior
+    , pure-async
     , pure-auth
     , pure-bloom
     , pure-conjurer
@@ -29,15 +30,19 @@ library
     , pure-json
     , pure-lifted
     , pure-maybe
+    , pure-marker
     , pure-random-pcg
     , pure-router
     , pure-sorcerer
+    , pure-time
     , pure-txt
+    , pure-txt-interpolate
     , pure-websocket
     , pure-websocket-cache
     , hashable
 
   exposed-modules:
+    Pure.Magician
     Pure.Magician.Resources
     Pure.Magician.Client
     Pure.Magician.Client.Restore
