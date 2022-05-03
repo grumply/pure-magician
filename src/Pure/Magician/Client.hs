@@ -28,7 +28,8 @@ module Pure.Magician.Client
 import Pure.Magician.Client.Restore as Export
 import Pure.Magician.Resources as Export
 
-import Pure.Async as Export
+import Pure.Async as Export hiding (eval)
+import Pure.Async (eval)
 import Pure.Auth (Username(..),Access(..),Token(..),authenticate,withToken,authorize,defaultOnRegistered)
 import Pure.Conjurer as C hiding (Route,Routable)
 import qualified Pure.Conjurer as C
